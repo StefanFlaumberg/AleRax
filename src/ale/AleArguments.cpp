@@ -19,7 +19,7 @@ AleArguments::AleArguments(int iargc, char *iargv[]):
   argv(iargv),
   reconciliationModelStr("UndatedDTL"),
   transferConstraint(TransferConstaint::PARENTS),
-  noTL(false),
+  noVirtualEvents(false),
   gammaCategories(1),
   pruneSpeciesTree(false),
   ccpRooting(CCPRooting::UNIFORM),
@@ -76,8 +76,8 @@ AleArguments::AleArguments(int iargc, char *iargv[]):
       reconciliationModelStr = std::string(argv[++i]);
     } else if (arg == "--transfer-constraint") {
       transferConstraint = ArgumentsHelper::strToTransferConstraint(std::string(argv[++i]));
-    } else if (arg == "--no-tl") {
-      noTL = true;
+    } else if (arg == "--no-virtual-events") {
+      noVirtualEvents = true;
     } else if (arg == "--memory-savings") {
       memorySavings = true;
     } else if (arg == "--d") {
@@ -200,6 +200,9 @@ void AleArguments::printSummary() const
   case TransferConstaint::RELDATED:
     Logger::info << "transfers to the past are forbidden" << std::endl;
     break;
+  }
+  if (noVirtualEvents) {
+    Logger::info << "\tThe model will not consider DL and TL events" << std::endl;
   }
   Logger::info << "\tMemory savings: " << getOnOff(memorySavings) << std::endl;
   Logger::info << "\tModel parametrization: ";
@@ -329,6 +332,7 @@ void AleArguments::printHelp() const
   Logger::info << "\t--gene-tree-rooting {UNIFORM, MAD, ROOTED}" << std::endl;
   Logger::info << "\t--prune-species-tree" << std::endl;
   Logger::info << "\t--fraction-missing-file <filepath>" << std::endl;
+  Logger::info << "\t--no-virtual-events" << std::endl;
   Logger::info << "\t--memory-savings" << std::endl;
 
   Logger::info << "Search strategy options:" << std::endl;

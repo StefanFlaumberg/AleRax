@@ -9,7 +9,7 @@
 #include <search/SpeciesTransferSearch.hpp>
 
 
-static std::shared_ptr<MultiModel> createModel(SpeciesTree &speciesTree,
+static MultiEvaluationPtr createModel(SpeciesTree &speciesTree,
     const FamilyInfo &family,
     const RecModelInfo &info,
     const double alpha,
@@ -17,7 +17,7 @@ static std::shared_ptr<MultiModel> createModel(SpeciesTree &speciesTree,
     const std::vector<Highway> &highways,
     bool highPrecision)
 {
-  std::shared_ptr<MultiModel> model;
+  std::shared_ptr<MultiModelInterface> model;
   GeneSpeciesMapping mapping;
   mapping.fill(family.mappingFile, family.startingGeneTree);
   switch (info.model) {
@@ -424,7 +424,6 @@ void AleEvaluator::sampleFamilyScenarios(unsigned int i, unsigned int samples,
 {
   assert(i < getLocalFamilyNumber());
   scenarios.clear();
-  getEvaluation(i).computeLogLikelihood();
   bool ok = getEvaluation(i).sampleReconciliations(samples, scenarios);
   if (_highPrecisions[i] == -1 && !ok) {
     // We are in the low precision mode (we use double)
@@ -467,7 +466,6 @@ void AleEvaluator::getTransferInformation(SpeciesTree &speciesTree,
         mapping,
         infoCopy,
         family.ccp);
-    evaluation.computeLogLikelihood();
     std::vector< std::shared_ptr<Scenario> > scenarios;
     // Warning:
     // Using Random::getProba() in the sampling function makes

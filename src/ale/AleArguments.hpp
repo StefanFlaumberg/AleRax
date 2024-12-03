@@ -61,7 +61,7 @@ public:
   // model
   std::string reconciliationModelStr;
   TransferConstaint transferConstraint;
-  bool noTL;
+  bool noVirtualEvents;
   unsigned int gammaCategories;
   bool pruneSpeciesTree;
   std::string fractionMissingFile;

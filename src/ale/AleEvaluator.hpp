@@ -15,7 +15,7 @@
 #include "UndatedDTLMultiModel.hpp"
 
 class RecModelInfo;
-using MultiEvaluation = MultiModel;
+using MultiEvaluation = MultiModelInterface;
 using MultiEvaluationPtr = std::shared_ptr<MultiEvaluation>;
 using PerCoreMultiEvaluations = std::vector<MultiEvaluationPtr>;
 class AleOptimizer;
@@ -176,7 +176,7 @@ public:
   const RecModelInfo &getRecModelInfo() const {return _info;}
   std::vector<AleModelParameters> &getModelParameters() {return _modelParameters;}
   const std::vector<Highway> &getHighways() const {return _highways;}
-  MultiModel &getEvaluation(unsigned int i) {return *_evaluations[i];}
+  MultiEvaluation &getEvaluation(unsigned int i) {return *_evaluations[i];}
   unsigned int getLocalFamilyNumber() const {return _geneTrees.getTrees().size();}
   std::string getOutputDir() const {return _outputDir;}
   const OptimizationClasses &getOptimizationClasses() const {return _optimizationClasses;}

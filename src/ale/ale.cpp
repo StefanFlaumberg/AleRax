@@ -385,7 +385,7 @@ RecModelInfo buildRecModelInfo(const AleArguments &args)
       -1.0, // branch length threshold
       args.transferConstraint,
       false, // no dup (option specific to GeneRax)
-      args.noTL,
+      args.noVirtualEvents,
       args.fractionMissingFile,
       args.memorySavings);
 }
