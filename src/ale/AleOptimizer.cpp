@@ -436,19 +436,73 @@ void AleOptimizer::saveFamiliesTakingHighway(const Highway &highway,
   ParallelContext::barrier();
 }
 
-void AleOptimizer::reconcile(unsigned int samples)
+void AleOptimizer::reconcile(int samples)
 {
   assert(getCurrentStep() == AleStep::Reconciliation);
+  assert(samples >= -1);
   if (samples == 0) {
     return;
   }
-  Logger::timed << "[Reconciliation] Sampling reconciled gene trees (" << samples
-                << " samples per gene family)" << std::endl;
-  // Initiating directories
+  // Initializing directories
   auto recDir = FileSystem::joinPaths(_outputDir, "reconciliations");
   FileSystem::mkdir(recDir, true);
   auto allRecDir = FileSystem::joinPaths(recDir, "all");
   FileSystem::mkdir(allRecDir, true);
+  ParallelContext::barrier();
+  // Sampling ML reconciliations
+  inferMLReconciliations();
+  // Sampling stochastic reconciliations
+  if (samples > 0) {
+    sampleReconciliations(static_cast<unsigned int>(samples));
+  }
+  Logger::timed << "Reconciliation output directory: " << recDir << std::endl;
+}
+
+void AleOptimizer::inferMLReconciliations()
+{
+  Logger::timed << "[Reconciliation] Sampling reconciled gene trees (1 ML"
+                << " sample per gene family)" << std::endl;
+  // Initializing directories
+  auto recDir = FileSystem::joinPaths(_outputDir, "reconciliations");
+  auto allRecDir = FileSystem::joinPaths(recDir, "all");
+  Logger::timed << "[Reconciliation] Inferring reconciliations" << std::endl;
+  const auto &localFamilies = _geneTrees.getTrees();
+  for (unsigned int i = 0; i < localFamilies.size(); ++i) {
+    std::vector< std::shared_ptr<Scenario> > scenarios;
+    _evaluator->sampleFamilyScenarios(i, 0, scenarios);
+    assert(scenarios.size() == 1);
+    // writing in the reconciliations/all/ dir
+    auto geneTreePath = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_sample_ml.newick"));
+    auto geneTreeAlePath = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_sample_ml.alerec"));
+    auto geneTreeXMLPath = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_sample_ml.xml"));
+    auto eventCountsFile = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_eventCounts_ml.txt"));
+    auto perSpeciesEventCountsFile = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_speciesEventCounts_ml.txt"));
+    auto transferFile = FileSystem::joinPaths(allRecDir,
+        localFamilies[i].name + std::string("_transfers_ml.txt"));
+    auto &scenario = *scenarios[0];
+    scenario.saveReconciliation(geneTreePath, ReconciliationFormat::NewickEvents, false);
+    scenario.saveReconciliation(geneTreeAlePath, ReconciliationFormat::ALE, false);
+    scenario.saveReconciliation(geneTreeXMLPath, ReconciliationFormat::RecPhyloXML, false);
+    scenario.saveEventsCounts(eventCountsFile, false);
+    scenario.savePerSpeciesEventsCounts(perSpeciesEventCountsFile, false);
+    scenario.saveTransfers(transferFile, false);
+  }
+  ParallelContext::barrier();
+  assert(ParallelContext::isRandConsistent());
+}
+
+void AleOptimizer::sampleReconciliations(unsigned int samples)
+{
+  Logger::timed << "[Reconciliation] Sampling reconciled gene trees (" << samples
+                << " samples per gene family)" << std::endl;
+  // Initializing directories
+  auto recDir = FileSystem::joinPaths(_outputDir, "reconciliations");
+  auto allRecDir = FileSystem::joinPaths(recDir, "all");
   auto summariesDir = FileSystem::joinPaths(recDir, "summaries");
   FileSystem::mkdir(summariesDir, true);
   auto originsDir = FileSystem::joinPaths(recDir, "origins");
@@ -488,7 +542,7 @@ void AleOptimizer::reconcile(unsigned int samples)
     auto geneTreesAlePath = FileSystem::joinPaths(allRecDir, localFamilies[i].name + std::string("_samples.alerec"));
     ParallelOfstream geneTreesAleOs(geneTreesAlePath, false);
     for (unsigned int sample = 0; sample < samples; ++sample) {
-      auto out = FileSystem::joinPaths(allRecDir,
+      auto geneTreeXMLPath = FileSystem::joinPaths(allRecDir,
           localFamilies[i].name + std::string("_sample_") + std::to_string(sample) + ".xml");
       auto eventCountsFile = FileSystem::joinPaths(allRecDir,
           localFamilies[i].name + std::string("_eventCounts_") + std::to_string(sample) + ".txt");
@@ -499,9 +553,9 @@ void AleOptimizer::reconcile(unsigned int samples)
       perSpeciesEventCountsFiles.push_back(perSpeciesEventCountsFile);
       transferFiles.push_back(transferFile);
       auto &scenario = *scenarios[sample];
-      scenario.saveReconciliation(out, ReconciliationFormat::RecPhyloXML, false);
       scenario.saveReconciliation(geneTreesOs, ReconciliationFormat::NewickEvents);
       scenario.saveReconciliation(geneTreesAleOs, ReconciliationFormat::ALE);
+      scenario.saveReconciliation(geneTreeXMLPath, ReconciliationFormat::RecPhyloXML, false);
       scenario.saveEventsCounts(eventCountsFile, false);
       scenario.savePerSpeciesEventsCounts(perSpeciesEventCountsFile, false);
       scenario.saveTransfers(transferFile, false);
@@ -555,7 +609,6 @@ void AleOptimizer::reconcile(unsigned int samples)
     saveFamiliesTakingHighway(highways[hi], perHighwayPerFamTransfers[hi], highwayFamiliesOutputDir);
   }
   assert(ParallelContext::isRandConsistent());
-  Logger::timed << "Reconciliation output directory: " << recDir << std::endl;
 }
 
 void AleOptimizer::saveBestHighways(const std::vector<ScoredHighway> &scoredHighways,

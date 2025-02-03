@@ -22,6 +22,8 @@ AleArguments::AleArguments(int iargc, char *iargv[]):
   noVirtualEvents(false),
   gammaCategories(1),
   pruneSpeciesTree(false),
+  fractionMissing(0.0),
+  fractionContaminating(0.0),
   ccpRooting(CCPRooting::UNIFORM),
   originationStrategy(OriginationStrategy::UNIFORM),
   memorySavings(false),
@@ -104,6 +106,8 @@ AleArguments::AleArguments(int iargc, char *iargv[]):
       pruneSpeciesTree = true;
     } else if (arg == "--fraction-missing-file") {
       fractionMissingFile = std::string(argv[++i]);
+    } else if (arg == "--fraction-contaminating") {
+      fractionContaminating = atof(argv[++i]);
     } else if (arg == "--gene-tree-rooting") {
       ccpRooting = ArgumentsHelper::strToCCPRooting(std::string(argv[++i]));
     } else if (arg == "--origination") {
@@ -231,6 +235,9 @@ void AleArguments::printSummary() const
   Logger::info << "\tPrune species mode is " << (pruneSpeciesTree ? "enabled" : "disabled") << std::endl;
   if (fractionMissingFile.size()) {
     Logger::info << "\tFraction of missing gene file: " << fractionMissingFile << std::endl;
+  }
+  if (fractionContaminating) {
+    Logger::info << "\tFraction of contaminating genes: " << fractionContaminating << std::endl;
   }
   Logger::info << "\tGene tree rooting: ";
   switch (ccpRooting) {

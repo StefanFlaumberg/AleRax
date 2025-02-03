@@ -64,7 +64,10 @@ public:
   bool noVirtualEvents;
   unsigned int gammaCategories;
   bool pruneSpeciesTree;
+  double fractionMissing;
   std::string fractionMissingFile;
+  double fractionContaminating;
+  std::string fractionContaminatingFile;
   CCPRooting ccpRooting;
   OriginationStrategy originationStrategy;
   bool memorySavings;
@@ -97,7 +100,7 @@ public:
 
   // output
   std::string output;
-  unsigned int geneTreeSamples;
+  int geneTreeSamples;
   bool cleanupCCP;
 
   // random seed

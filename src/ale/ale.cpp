@@ -386,7 +386,10 @@ RecModelInfo buildRecModelInfo(const AleArguments &args)
       args.transferConstraint,
       false, // no dup (option specific to GeneRax)
       args.noVirtualEvents,
+      args.fractionMissing,
       args.fractionMissingFile,
+      args.fractionContaminating,
+      args.fractionContaminatingFile,
       args.memorySavings);
 }
 
