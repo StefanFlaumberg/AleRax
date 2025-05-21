@@ -61,8 +61,8 @@ private:
     // In the paper: \bar{Pi}_{e,gamma} of a clade gamma for each branch e
     std::vector<REAL> _tq;
     DTLCLV():
-      _uq(REAL()),
-      _tq(REAL())
+      _uq(0),
+      _tq(0)
     {}
     DTLCLV(unsigned int speciesNumber, unsigned int gammaCategories):
       _uq(speciesNumber * gammaCategories, REAL()),
@@ -71,6 +71,7 @@ private:
   };
   // vector of DTLCLVs for all observed clades
   std::vector<DTLCLV> _dtlclvs;
+  std::vector<DTLCLV> _auxclvs;
 
   // functions to work with CLVs
   virtual void allocateMemory();
@@ -86,6 +87,7 @@ private:
       corax_rnode_t *speciesNode,
       unsigned int category,
       REAL &proba,
+      REAL &auxProba,
       Scenario *scenario = nullptr,
       ReconciliationCell<REAL> *recCell = nullptr,
       bool stochastic = true);
@@ -95,7 +97,8 @@ private:
   bool inferMLTransferEvent(CID cid,
       corax_rnode_t *srcSpeciesNode,
       unsigned int category,
-      Scenario::Event &event);
+      Scenario::Event &event,
+      bool useAux = false);
   bool sampleTransferEvent(CID cid,
       corax_rnode_t *srcSpeciesNode,
       unsigned int category,
@@ -209,6 +212,7 @@ void UndatedDTLMultiModel<REAL>::allocateMemory()
 {
   DTLCLV nullCLV(this->getAllSpeciesNodeNumber(), _gammaCatNumber);
   _dtlclvs = std::vector<DTLCLV>(this->_ccp.getCladesNumber(), nullCLV);
+  if (this->_FP.size()) _auxclvs = _dtlclvs;
 }
 
 /**
@@ -218,6 +222,7 @@ template<class REAL>
 void UndatedDTLMultiModel<REAL>::deallocateMemory()
 {
   _dtlclvs = std::vector<DTLCLV>();
+  if (this->_FP.size()) _auxclvs = _dtlclvs;
 }
 
 /**
@@ -228,23 +233,30 @@ void UndatedDTLMultiModel<REAL>::updateCLV(CID cid)
 {
   auto &uq = _dtlclvs[cid]._uq;
   auto &tq = _dtlclvs[cid]._tq;
+  auto &auq = (this->_FP.size()) ? _auxclvs[cid]._uq : uq;
+  auto &atq = (this->_FP.size()) ? _auxclvs[cid]._tq : tq;
   std::fill(uq.begin(), uq.end(), REAL());
   std::fill(tq.begin(), tq.end(), REAL());
+  std::fill(auq.begin(), auq.end(), REAL());
+  std::fill(atq.begin(), atq.end(), REAL());
   // iterate several times to resolve the DL and TL terms with
   // fixed point optimization
   unsigned int maxIt = this->_info.noVirtualEvents ? 1 : 4;
   for (unsigned int it = 0; it < maxIt; ++it) {
+    bool ok;
     for (unsigned int c = 0; c < _gammaCatNumber; ++c) {
       // postorder species tree traversal is granted
       for (auto speciesNode: this->getPrunedSpeciesNodes()) {
         auto e = speciesNode->node_index;
         auto ec = e * _gammaCatNumber + c;
-        REAL p = REAL();
-        computeProbability(cid,
+        REAL p, ap;
+        ok = computeProbability(cid,
             speciesNode,
             c,
-            p);
+            p, ap);
+        assert(ok);
         uq[ec] = p;
+        if (this->_FP.size()) auq[ec] = ap;
       }
       // now that we've got the clade proba on every species branch,
       // we can compute the clade transfer probas
@@ -252,14 +264,21 @@ void UndatedDTLMultiModel<REAL>::updateCLV(CID cid)
         auto e = speciesNode->node_index;
         auto ec = e * _gammaCatNumber + c;
         REAL p = REAL();
+        REAL ap = REAL();
         for (auto destSpeciesNode: _transferCandidateSpeciesNodes[e]) {
           auto d = destSpeciesNode->node_index;
           auto dc = d * _gammaCatNumber + c;
           p += uq[dc];
+          if (this->_FP.size()) ap += auq[dc];
         }
         p /= getTransferWeightNorm(e);
         scale(p);
         tq[ec] = p;
+        if (this->_FP.size()) {
+          ap /= getTransferWeightNorm(e);
+          scale(ap);
+          atq[ec] = ap;
+        }
       }
     }
   }
@@ -502,6 +521,7 @@ REAL UndatedDTLMultiModel<REAL>::getRootCladeLikelihood(corax_rnode_t *speciesNo
   auto e = speciesNode->node_index;
   auto ec = e * _gammaCatNumber + c;
   REAL likelihood = _dtlclvs[rootCID]._uq[ec] * _OP[e];
+  scale(likelihood);
   return likelihood;
 }
 
@@ -513,16 +533,18 @@ template <class REAL>
 bool UndatedDTLMultiModel<REAL>::inferMLTransferEvent(unsigned int cid,
     corax_rnode_t *srcSpeciesNode,
     unsigned int category,
-    Scenario::Event &event)
+    Scenario::Event &event,
+    bool useAux)
 {
   auto c = category;
   auto e = srcSpeciesNode->node_index;
+  auto &clvs = (useAux) ? _auxclvs : _dtlclvs;
   auto ok = false;
   auto maxProba = REAL();
   for (auto destSpeciesNode: _transferCandidateSpeciesNodes[e]) {
     auto d = destSpeciesNode->node_index;
     auto dc = d * _gammaCatNumber + c;
-    auto proba = _dtlclvs[cid]._uq[dc];
+    auto proba = clvs[cid]._uq[dc];
     if (proba >= maxProba) {
       maxProba = proba;
       event.destSpeciesNode = d;
@@ -571,11 +593,14 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     corax_rnode_t *speciesNode,
     unsigned int category,
     REAL &proba,
+    REAL &auxProba,
     Scenario *scenario,
     ReconciliationCell<REAL> *recCell,
     bool stochastic)
 {
   proba = REAL();
+  auxProba = REAL();
+  REAL contProba = REAL();
   REAL temp;
   bool isGeneLeaf = this->_ccp.isLeaf(cid);
   bool isSpeciesLeaf = !this->getSpeciesLeft(speciesNode);
@@ -592,6 +617,8 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     fc = f * _gammaCatNumber + c;
     gc = g * _gammaCatNumber + c;
   }
+  bool usingAux = (this->_FP.size()) ? true : false;
+  auto &auxclvs = (usingAux) ? _auxclvs : _dtlclvs;
   // do not allow consecutive src-loss TL events to avoid loops
   bool restrictTL = (scenario &&
       scenario->getLastEventType() == ReconciliationEventType::EVENT_TL);
@@ -602,16 +629,17 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     assert(stochastic);
   }
   // for terminal clades:
-  // Pi(u,e) = S * (1 - p_fake(u)) + SL + DL + TL
+  // Pi(u,e) = auxPi(u,e) = S * (1 - p_fake(u)) + auxSL + auxDL + auxTL
   // for internal clades:
-  // Pi(u,e) = Pi(v,e) * p_fake(w) + Pi(w,e) * p_fake(v) + (S + D + ...)
+  // auxPi(u,e) = (S + D + T + auxSL + auxDL + auxTL)
+  // Pi(u,e) = auxPi(u,e) + Pi(v,e)*p_fake(w) + Pi(w,e)*p_fake(v)
   //
   // S events on terminal species branches can happen
   // for terminal gene nodes only:
   if (isGeneLeaf) {
     // - S event on a terminal species branch (only for compatible genes and species)
     if (isSpeciesLeaf && this->_geneToSpecies[cid] == e) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[cid]];
+      auto isGeneFake = (this->_FP.size()) ? this->getCladeFakeProba(cid) : REAL();
       temp = REAL(_PS[ec]) * (1.0 - isGeneFake);
       proba = (stochastic) ? proba + temp : temp;
       if (recCell && proba >= maxProba) {
@@ -628,23 +656,6 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     auto cidLeft = cladeSplit.left;
     auto cidRight = cladeSplit.right;
     auto freq = cladeSplit.frequency;
-    // p_fake of a clade is the product of p_fake of its leaves
-    auto isLeftFake = REAL(1.0);
-    for (auto leafCid: this->_ccp.getCladeLeaves(cidLeft)) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[leafCid]];
-      isLeftFake *= isGeneFake;
-      if (isGeneFake == 0.0) {
-        break;
-      }
-    }
-    auto isRightFake = REAL(1.0);
-    for (auto leafCid: this->_ccp.getCladeLeaves(cidRight)) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[leafCid]];
-      isRightFake *= isGeneFake;
-      if (isGeneFake == 0.0) {
-        break;
-      }
-    }
     // - S event on an internal species branch
     if (!isSpeciesLeaf) {
       temp = _dtlclvs[cidLeft]._uq[fc] * _dtlclvs[cidRight]._uq[gc] * (_PS[ec] * freq);
@@ -755,33 +766,37 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
         if (stochastic) return true; else maxProba = proba;
       }
     }
-    // - C event (left or right clade consists entirely of contaminants)
-    temp = _dtlclvs[cidLeft]._uq[ec] * isRightFake * freq;
-    scale(temp);
-    proba = (stochastic) ? proba + temp : temp;
-    if (recCell && proba >= maxProba) {
-      recCell->clear();
-      recCell->event.type = ReconciliationEventType::EVENT_C;
-      recCell->event.leftGeneIndex = cidLeft;
-      recCell->blLeft = cladeSplit.blLeft;
-      if (stochastic) return true; else maxProba = proba;
-    }
-    temp = _dtlclvs[cidRight]._uq[ec] * isLeftFake * freq;
-    scale(temp);
-    proba = (stochastic) ? proba + temp : temp;
-    if (recCell && proba >= maxProba) {
-      recCell->clear();
-      recCell->event.type = ReconciliationEventType::EVENT_C;
-      recCell->event.leftGeneIndex = cidRight;
-      recCell->blLeft = cladeSplit.blRight;
-      if (stochastic) return true; else maxProba = proba;
+    if (this->_FP.size()) {
+      auto isLeftFake = this->getCladeFakeProba(cidLeft);
+      auto isRightFake = this->getCladeFakeProba(cidRight);
+      // - C event (left or right clade consists entirely of contaminants)
+      temp = _dtlclvs[cidLeft]._uq[ec] * isRightFake * freq;
+      scale(temp);
+      contProba = (stochastic) ? contProba + temp : temp;
+      if (recCell && contProba >= maxProba) {
+        recCell->clear();
+        recCell->event.type = ReconciliationEventType::EVENT_C;
+        recCell->event.leftGeneIndex = cidLeft;
+        recCell->blLeft = cladeSplit.blLeft;
+        assert(!stochastic); maxProba = contProba;
+      }
+      temp = _dtlclvs[cidRight]._uq[ec] * isLeftFake * freq;
+      scale(temp);
+      contProba = (stochastic) ? contProba + temp : temp;
+      if (recCell && contProba >= maxProba) {
+        recCell->clear();
+        recCell->event.type = ReconciliationEventType::EVENT_C;
+        recCell->event.leftGeneIndex = cidRight;
+        recCell->blLeft = cladeSplit.blRight;
+        assert(!stochastic); maxProba = contProba;
+      }
     }
   }
   // SL events, DL events and TL events can happen
   // for any of gene nodes:
   // - SL event (only on an internal species branch)
   if (!isSpeciesLeaf) {
-    temp = _dtlclvs[cid]._uq[fc] * (_uE[gc] * _PS[ec]);
+    temp = auxclvs[cid]._uq[fc] * (_uE[gc] * _PS[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : temp;
     if (recCell && proba >= maxProba) {
@@ -792,7 +807,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
       recCell->event.pllLostSpeciesNode = this->getSpeciesRight(speciesNode);
       if (stochastic) return true; else maxProba = proba;
     }
-    temp = _dtlclvs[cid]._uq[gc] * (_uE[fc] * _PS[ec]);
+    temp = auxclvs[cid]._uq[gc] * (_uE[fc] * _PS[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : temp;
     if (recCell && proba >= maxProba) {
@@ -806,7 +821,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
   }
   if (!this->_info.noVirtualEvents) {
     // - DL event
-    temp = _dtlclvs[cid]._uq[ec] * (_uE[ec] * _PD[ec] * 2.0);
+    temp = auxclvs[cid]._uq[ec] * (_uE[ec] * _PD[ec] * 2.0);
     scale(temp);
     proba = (stochastic) ? proba + temp : REAL(); // can never be the ML event
     if (recCell && proba >= maxProba) {
@@ -817,7 +832,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     }
     // - TL event
     // we transfer, but the gene gets extinct in the receiving species
-    temp = _dtlclvs[cid]._uq[ec] * (_tE[ec] * _PT[ec]);
+    temp = auxclvs[cid]._uq[ec] * (_tE[ec] * _PT[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : REAL(); // can never be the ML event
     if (recCell && proba >= maxProba) {
@@ -829,7 +844,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
     }
     // we transfer, and the gene gets extinct in the sending species
     temp = (restrictTL) ? REAL() :
-        _dtlclvs[cid]._tq[ec] * (_uE[ec] * _PT[ec]);
+        auxclvs[cid]._tq[ec] * (_uE[ec] * _PT[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : temp;
     if (recCell && proba >= maxProba) {
@@ -837,7 +852,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
       recCell->event.type = ReconciliationEventType::EVENT_TL;
       auto ok = (stochastic) ?
           sampleTransferEvent(cid, speciesNode, c, recCell->event) :
-          inferMLTransferEvent(cid, speciesNode, c, recCell->event);
+          inferMLTransferEvent(cid, speciesNode, c, recCell->event, usingAux);
       if (!ok) {
         return false;
       }
@@ -848,7 +863,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
       auto d = highway.highway.dest->node_index;
       auto dc = d * _gammaCatNumber + c;
       // we transfer, but the gene gets extinct in the receiving species
-      temp = _dtlclvs[cid]._uq[ec] * (_uE[dc] * highway.proba[c]);
+      temp = auxclvs[cid]._uq[ec] * (_uE[dc] * highway.proba[c]);
       scale(temp);
       proba = (stochastic) ? proba + temp : REAL(); // can never be the ML event
       if (recCell && proba >= maxProba) {
@@ -860,7 +875,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
       }
       // we transfer, and the gene gets extinct in the sending species
       temp = (restrictTL) ? REAL() :
-          _dtlclvs[cid]._uq[dc] * (_uE[ec] * highway.proba[c]);
+          auxclvs[cid]._uq[dc] * (_uE[ec] * highway.proba[c]);
       scale(temp);
       proba = (stochastic) ? proba + temp : temp;
       if (recCell && proba >= maxProba) {
@@ -871,6 +886,10 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(CID cid,
         if (stochastic) return true; else maxProba = proba;
       }
     }
+  }
+  if (stochastic) {
+    auxProba = proba;
+    proba += contProba;
   }
   if (stochastic && recCell) {
     Logger::error << "error: proba=" << proba << ", maxProba=" << maxProba

@@ -54,6 +54,7 @@ private:
       corax_rnode_t *speciesNode,
       unsigned int category,
       REAL &proba,
+      REAL &auxProba,
       Scenario *scenario = nullptr,
       ReconciliationCell<REAL> *recCell = nullptr,
       bool stochastic = true);
@@ -141,16 +142,18 @@ void UndatedDLMultiModel<REAL>::updateCLV(CID cid)
 {
   auto &uq = _dlclvs[cid];
   std::fill(uq.begin(), uq.end(), REAL());
+  bool ok;
   for (unsigned int c = 0; c < _gammaCatNumber; ++c) {
     // postorder species tree traversal is granted
     for (auto speciesNode: this->getPrunedSpeciesNodes()) {
       auto e = speciesNode->node_index;
       auto ec = e * _gammaCatNumber + c;
-      REAL p = REAL();
-      computeProbability(cid,
+      REAL p, ap;
+      ok = computeProbability(cid,
           speciesNode,
           c,
-          p);
+          p, ap);
+      assert(ok);
       uq[ec] = p;
     }
   }
@@ -297,6 +300,7 @@ REAL UndatedDLMultiModel<REAL>::getRootCladeLikelihood(corax_rnode_t *speciesNod
   auto e = speciesNode->node_index;
   auto ec = e * _gammaCatNumber + c;
   REAL likelihood = _dlclvs[rootCID][ec] * _OP[e];
+  scale(likelihood);
   return likelihood;
 }
 
@@ -309,11 +313,14 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
     corax_rnode_t *speciesNode,
     unsigned int category,
     REAL &proba,
+    REAL &auxProba,
     Scenario *scenario,
     ReconciliationCell<REAL> *recCell,
     bool stochastic)
 {
   proba = REAL();
+  (void)(auxProba);
+  REAL contProba = REAL();
   REAL temp;
   bool isGeneLeaf = this->_ccp.isLeaf(cid);
   bool isSpeciesLeaf = !this->getSpeciesLeft(speciesNode);
@@ -340,14 +347,14 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
   // for terminal clades:
   // Pi(u,e) = S * (1 - p_fake(u)) + SL + DL
   // for internal clades:
-  // Pi(u,e) = Pi(v,e) * p_fake(w) + Pi(w,e) * p_fake(v) + (S + D + ...)
+  // Pi(u,e) = (S + D + corrSL + corrDL) + Pi(v,e)*p_fake(w) + Pi(w,e)*p_fake(v)
   //
   // S events on terminal species branches can happen
   // for terminal gene nodes only:
   if (isGeneLeaf) {
     // - S event on a terminal species branch (only for compatible genes and species)
     if (isSpeciesLeaf && this->_geneToSpecies[cid] == e) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[cid]];
+      auto isGeneFake = (this->_FP.size()) ? this->getCladeFakeProba(cid) : REAL();
       temp = REAL(_PS[ec]) * (1.0 - isGeneFake);
       proba = (stochastic) ? proba + temp : temp;
       if (recCell && proba >= maxProba) {
@@ -358,29 +365,14 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
       }
     }
   }
+  REAL correctSL1 = REAL();
+  REAL correctSL2 = REAL();
   // S events on internal species branches and D events can happen
   // for ancestral gene nodes only:
   for (const auto &cladeSplit: this->_ccp.getCladeSplits(cid)) {
     auto cidLeft = cladeSplit.left;
     auto cidRight = cladeSplit.right;
     auto freq = cladeSplit.frequency;
-    // p_fake of a clade is the product of p_fake of its leaves
-    auto isLeftFake = REAL(1.0);
-    for (auto leafCid: this->_ccp.getCladeLeaves(cidLeft)) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[leafCid]];
-      isLeftFake *= isGeneFake;
-      if (isGeneFake == 0.0) {
-        break;
-      }
-    }
-    auto isRightFake = REAL(1.0);
-    for (auto leafCid: this->_ccp.getCladeLeaves(cidRight)) {
-      auto isGeneFake = this->_fc[this->_geneToSpecies[leafCid]];
-      isRightFake *= isGeneFake;
-      if (isGeneFake == 0.0) {
-        break;
-      }
-    }
     // - S event on an internal species branch
     if (!isSpeciesLeaf) {
       temp = _dlclvs[cidLeft][fc] * _dlclvs[cidRight][gc] * (_PS[ec] * freq);
@@ -421,33 +413,51 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
       recCell->blRight = cladeSplit.blRight;
       if (stochastic) return true; else maxProba = proba;
     }
-    // - C event (left or right clade consists entirely of contaminants)
-    temp = _dlclvs[cidLeft][ec] * isRightFake * freq;
-    scale(temp);
-    proba = (stochastic) ? proba + temp : temp;
-    if (recCell && proba >= maxProba) {
-      recCell->clear();
-      recCell->event.type = ReconciliationEventType::EVENT_C;
-      recCell->event.leftGeneIndex = cidLeft;
-      recCell->blLeft = cladeSplit.blLeft;
-      if (stochastic) return true; else maxProba = proba;
-    }
-    temp = _dlclvs[cidRight][ec] * isLeftFake * freq;
-    scale(temp);
-    proba = (stochastic) ? proba + temp : temp;
-    if (recCell && proba >= maxProba) {
-      recCell->clear();
-      recCell->event.type = ReconciliationEventType::EVENT_C;
-      recCell->event.leftGeneIndex = cidRight;
-      recCell->blLeft = cladeSplit.blRight;
-      if (stochastic) return true; else maxProba = proba;
+    if (this->_FP.size()) {
+      auto isLeftFake = this->getCladeFakeProba(cidLeft);
+      auto isRightFake = this->getCladeFakeProba(cidRight);
+      // - C event (left or right clade consists entirely of contaminants)
+      temp = _dlclvs[cidLeft][ec] * isRightFake * freq;
+      scale(temp);
+      contProba = (stochastic) ? contProba + temp : temp;
+      if (recCell && contProba >= maxProba) {
+        recCell->clear();
+        recCell->event.type = ReconciliationEventType::EVENT_C;
+        recCell->event.leftGeneIndex = cidLeft;
+        recCell->blLeft = cladeSplit.blLeft;
+        assert(!stochastic); maxProba = contProba;
+      }
+      temp = _dlclvs[cidRight][ec] * isLeftFake * freq;
+      scale(temp);
+      contProba = (stochastic) ? contProba + temp : temp;
+      if (recCell && contProba >= maxProba) {
+        recCell->clear();
+        recCell->event.type = ReconciliationEventType::EVENT_C;
+        recCell->event.leftGeneIndex = cidRight;
+        recCell->blLeft = cladeSplit.blRight;
+        assert(!stochastic); maxProba = contProba;
+      }
+      // correction sums for SL events
+      temp = _dlclvs[cidLeft][fc] * isRightFake * freq;
+      scale(temp);
+      correctSL1 += temp;
+      temp = _dlclvs[cidRight][fc] * isLeftFake * freq;
+      scale(temp);
+      correctSL1 += temp;
+      temp = _dlclvs[cidLeft][gc] * isRightFake * freq;
+      scale(temp);
+      correctSL2 += temp;
+      temp = _dlclvs[cidRight][gc] * isLeftFake * freq;
+      scale(temp);
+      correctSL2 += temp;
     }
   }
   // SL events and DL events can happen
   // for any of gene nodes:
   // - SL event (only on an internal species branch)
   if (!isSpeciesLeaf) {
-    temp = _dlclvs[cid][fc] * (_uE[gc] * _PS[ec]);
+    scale(correctSL1);
+    temp = (_dlclvs[cid][fc] - correctSL1) * (_uE[gc] * _PS[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : temp;
     if (recCell && proba >= maxProba) {
@@ -458,7 +468,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
       recCell->event.pllLostSpeciesNode = this->getSpeciesRight(speciesNode);
       if (stochastic) return true; else maxProba = proba;
     }
-    temp = _dlclvs[cid][gc] * (_uE[fc] * _PS[ec]);
+    scale(correctSL2);
+    temp = (_dlclvs[cid][gc] - correctSL2) * (_uE[fc] * _PS[ec]);
     scale(temp);
     proba = (stochastic) ? proba + temp : temp;
     if (recCell && proba >= maxProba) {
@@ -481,6 +492,9 @@ bool UndatedDLMultiModel<REAL>::computeProbability(CID cid,
       recCell->event.type = ReconciliationEventType::EVENT_DL;
       if (stochastic) return true; else maxProba = proba;
     }
+  }
+  if (stochastic) {
+    proba += contProba;
   }
   if (stochastic && recCell) {
     Logger::error << "error: proba=" << proba << ", maxProba=" << maxProba

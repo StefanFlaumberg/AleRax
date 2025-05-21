@@ -103,7 +103,7 @@ void MultiModelInterface::mapGenesToSpecies()
   const auto &cidToLeaves = _ccp.getCidToLeaves();
   for (const auto &p: cidToLeaves) {
     const auto cid = p.first;
-    const auto &geneName = cidToLeaves.at(cid);
+    const auto &geneName = p.second;
     const auto &speciesName = this->_geneNameToSpeciesName[geneName];
     const auto spid = this->_speciesNameToId[speciesName];
     this->_geneToSpecies[cid] = spid;
@@ -162,7 +162,11 @@ public:
         geneSpeciesMapping,
         info,
         ccpFile)
-  {}
+  {
+    if (*std::max_element(this->_fc.begin(), this->_fc.end()) > 0.0) {
+      _FP.resize(this->_ccp.getCladesNumber(), REAL(-1.0));
+    }
+  }
 
   virtual ~MultiModel() {}
 
@@ -218,9 +222,12 @@ protected:
       corax_rnode_t *speciesNode,
       unsigned int category,
       REAL &proba,
+      REAL &auxProba,
       Scenario *scenario = nullptr,
       ReconciliationCell<REAL> *recCell = nullptr,
       bool stochastic = true) = 0;
+
+  REAL getCladeFakeProba(CID cid);
 
 private:
   /**
@@ -267,6 +274,9 @@ private:
       Scenario &scenario,
       bool stochastic);
 
+protected:
+  std::vector<REAL> _FP;
+
 };
 
 
@@ -280,6 +290,7 @@ double MultiModel<REAL>::computeLogLikelihood()
   // check if LL is already computed for this species tree
   auto cacheIt = this->_llCache.find(hash);
   if (cacheIt != this->_llCache.end()) {
+    if (!this->_info.isDated()) // too many collisions for dated getHash(), del the line upon fixing
     return cacheIt->second;
   }
   if (this->_memorySavings) {
@@ -375,6 +386,28 @@ void MultiModel<REAL>::updateCLVs()
 }
 
 template <class REAL>
+REAL MultiModel<REAL>::getCladeFakeProba(CID cid)
+{
+  assert(_FP.size());
+  REAL cladeFP;
+  if (_FP[cid] != -1.0) {
+    cladeFP = _FP[cid];
+  } else {
+    cladeFP = REAL(1.0);
+    for (auto leafCid: this->_ccp.getCladeLeaves(cid)) {
+      auto geneFP = this->_fc[this->_geneToSpecies[leafCid]];
+      cladeFP *= geneFP;
+      scale(cladeFP);
+      if (geneFP == 0.0) {
+        break;
+      }
+    }
+    _FP[cid] = cladeFP;
+  }
+  return cladeFP;
+}
+
+template <class REAL>
 corax_rnode_t *MultiModel<REAL>::inferMLOriginationSpecies(
     unsigned int &category)
 {
@@ -456,15 +489,15 @@ bool MultiModel<REAL>::backtrace(CID cid,
   auto c = category;
   // compute the probability of the clade on the species branch
   // under all possible scenarios
-  REAL proba;
-  if (!computeProbability(cid, speciesNode, c, proba, &scenario)) {
+  REAL proba, auxProba;
+  if (!computeProbability(cid, speciesNode, c, proba, auxProba, &scenario)) {
     return false;
   }
   // set sampling probability and sample a clade event of the clade
   // on the species branch
   ReconciliationCell<REAL> recCell;
   recCell.maxProba = (stochastic) ? proba * Random::getProba() : REAL();
-  if (!computeProbability(cid, speciesNode, c, proba, &scenario, &recCell, stochastic)) {
+  if (!computeProbability(cid, speciesNode, c, proba, auxProba, &scenario, &recCell, stochastic)) {
     return false;
   }
   // fill the recCell's event fields:
