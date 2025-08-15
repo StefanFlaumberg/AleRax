@@ -60,6 +60,7 @@ public:
   // model
   std::string reconciliationModelStr;
   TransferConstaint transferConstraint;
+  bool noDup;
   bool noDL;
   bool noTL;
   unsigned int gammaCategories;

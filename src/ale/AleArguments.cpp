@@ -16,8 +16,8 @@ const double DEFAULT_DTL_RATES = 0.1;
 
 AleArguments::AleArguments(int iargc, char *iargv[])
     : argc(iargc), argv(iargv), reconciliationModelStr("UndatedDTL"),
-      transferConstraint(TransferConstaint::PARENTS), noDL(false), noTL(false),
-      gammaCategories(1), pruneSpeciesTree(false),
+      transferConstraint(TransferConstaint::PARENTS), noDup(false), noDL(false),
+      noTL(false), gammaCategories(1), pruneSpeciesTree(false),
       ccpRooting(CCPRooting::UNIFORM),
       originationStrategy(OriginationStrategy::UNIFORM), memorySavings(false),
       d(DEFAULT_DTL_RATES), l(DEFAULT_DTL_RATES), t(DEFAULT_DTL_RATES),
@@ -63,6 +63,8 @@ AleArguments::AleArguments(int iargc, char *iargv[])
     } else if (arg == "--transfer-constraint") {
       transferConstraint =
           ArgumentsHelper::strToTransferConstraint(std::string(argv[++i]));
+    } else if (arg == "--no-dup") {
+      noDup = true;
     } else if (arg == "--no-dl") {
       noDL = true;
     } else if (arg == "--no-tl") {
@@ -190,6 +192,10 @@ void AleArguments::printSummary() const {
   case TransferConstaint::RELDATED:
     Logger::info << "transfers to the past are forbidden" << std::endl;
     break;
+  }
+  if (noDup) {
+    Logger::info << "\tThe model will not consider D and DL events"
+                 << std::endl;
   }
   if (noDL) {
     Logger::info << "\tThe model will not consider DL events" << std::endl;
