@@ -73,7 +73,7 @@ public:
   /**
    *  Sample reconciliations and generate many output files
    */
-  void reconcile(unsigned int samples);
+  void reconcile(int samples);
 
   /**
    *  Functions to handle transfer highways
@@ -129,6 +129,8 @@ private:
   void saveFamiliesTakingHighway(const Highway &highway,
                                  const VectorDouble &perFamilyTransfers,
                                  const std::string &directory);
+  void inferMLReconciliations();
+  void sampleReconciliations(unsigned int samples);
   void saveBestHighways(const std::vector<ScoredHighway> &highways,
                         const std::string &outputFile);
 

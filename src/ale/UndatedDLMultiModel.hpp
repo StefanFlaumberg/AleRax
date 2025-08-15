@@ -39,7 +39,7 @@ private:
   // functions to work with CLVs
   virtual void allocateMemory();
   virtual void deallocateMemory();
-  virtual void updateCLV(CID cid);
+  virtual void updateCLV(CID cid, bool stochastic);
 
   // functions to work with probabilities
   virtual void recomputeSpeciesProbabilities();
@@ -48,6 +48,7 @@ private:
                                       unsigned int category);
   virtual bool computeProbability(CID cid, corax_rnode_t *speciesNode,
                                   unsigned int category, REAL &proba,
+                                  bool stochastic, bool afterTransfer = false,
                                   ReconciliationCell<REAL> *recCell = nullptr);
 
   // functions to work with _llCache
@@ -116,7 +117,8 @@ template <class REAL> void UndatedDLMultiModel<REAL>::deallocateMemory() {
 /**
  *  Compute the CLV for a given clade
  */
-template <class REAL> void UndatedDLMultiModel<REAL>::updateCLV(CID cid) {
+template <class REAL>
+void UndatedDLMultiModel<REAL>::updateCLV(CID cid, bool stochastic) {
   auto &uq = _dlclvs[cid];
   std::fill(uq.begin(), uq.end(), REAL());
   bool ok;
@@ -125,8 +127,8 @@ template <class REAL> void UndatedDLMultiModel<REAL>::updateCLV(CID cid) {
     for (auto speciesNode : this->getPrunedSpeciesNodes()) {
       auto e = speciesNode->node_index;
       auto ec = e * _gammaCatNumber + c;
-      REAL p = REAL();
-      ok = computeProbability(cid, speciesNode, c, p);
+      REAL p;
+      ok = computeProbability(cid, speciesNode, c, p, stochastic);
       assert(ok);
       uq[ec] = p;
     }
@@ -282,7 +284,7 @@ REAL UndatedDLMultiModel<REAL>::getRootCladeLikelihood(
 template <class REAL>
 bool UndatedDLMultiModel<REAL>::computeProbability(
     CID cid, corax_rnode_t *speciesNode, unsigned int category, REAL &proba,
-    ReconciliationCell<REAL> *recCell) {
+    bool stochastic, bool afterTransfer, ReconciliationCell<REAL> *recCell) {
   proba = REAL();
   REAL temp;
   bool isGeneLeaf = this->_ccp.isLeaf(cid);
@@ -302,10 +304,12 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
   }
   REAL maxProba = REAL();
   if (recCell) {
-    recCell->event.geneNode = cid;
-    recCell->event.speciesNode = e;
     maxProba = recCell->maxProba;
   }
+  auto canSample = [stochastic, maxProba](REAL proba) {
+    return (stochastic) ? proba > maxProba : proba == maxProba;
+  };
+  (void)(afterTransfer);
   // S events on terminal species branches can happen
   // for terminal gene nodes only:
   if (isGeneLeaf) {
@@ -314,8 +318,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     if (isSpeciesLeaf && this->_geneToSpecies[cid] == e) {
       temp = REAL(_PS[ec]);
       scale(temp);
-      proba += temp;
-      if (recCell && proba > maxProba) {
+      proba = (stochastic) ? proba + temp : std::max(proba, temp);
+      if (recCell && canSample(proba)) {
         recCell->event.type = ReconciliationEventType::EVENT_None;
         recCell->event.label = this->_ccp.getLeafLabel(cid);
         return true;
@@ -332,8 +336,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     if (!isSpeciesLeaf) {
       temp = _dlclvs[cidLeft][fc] * _dlclvs[cidRight][gc] * (_PS[ec] * freq);
       scale(temp);
-      proba += temp;
-      if (recCell && proba > maxProba) {
+      proba = (stochastic) ? proba + temp : std::max(proba, temp);
+      if (recCell && canSample(proba)) {
         recCell->event.type = ReconciliationEventType::EVENT_S;
         recCell->event.leftGeneIndex = cidLeft;
         recCell->event.rightGeneIndex = cidRight;
@@ -343,8 +347,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
       }
       temp = _dlclvs[cidRight][fc] * _dlclvs[cidLeft][gc] * (_PS[ec] * freq);
       scale(temp);
-      proba += temp;
-      if (recCell && proba > maxProba) {
+      proba = (stochastic) ? proba + temp : std::max(proba, temp);
+      if (recCell && canSample(proba)) {
         recCell->event.type = ReconciliationEventType::EVENT_S;
         recCell->event.leftGeneIndex = cidRight;
         recCell->event.rightGeneIndex = cidLeft;
@@ -356,8 +360,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     // - D event
     temp = _dlclvs[cidLeft][ec] * _dlclvs[cidRight][ec] * (_PD[ec] * freq);
     scale(temp);
-    proba += temp;
-    if (recCell && proba > maxProba) {
+    proba = (stochastic) ? proba + temp : std::max(proba, temp);
+    if (recCell && canSample(proba)) {
       recCell->event.type = ReconciliationEventType::EVENT_D;
       recCell->event.leftGeneIndex = cidLeft;
       recCell->event.rightGeneIndex = cidRight;
@@ -372,8 +376,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
   if (!isSpeciesLeaf) {
     temp = _dlclvs[cid][fc] * (_uE[gc] * _PS[ec]);
     scale(temp);
-    proba += temp;
-    if (recCell && proba > maxProba) {
+    proba = (stochastic) ? proba + temp : std::max(proba, temp);
+    if (recCell && canSample(proba)) {
       recCell->event.type = ReconciliationEventType::EVENT_SL;
       recCell->event.lostSpeciesNode = g;
       recCell->event.pllDestSpeciesNode = this->getSpeciesLeft(speciesNode);
@@ -382,8 +386,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     }
     temp = _dlclvs[cid][gc] * (_uE[fc] * _PS[ec]);
     scale(temp);
-    proba += temp;
-    if (recCell && proba > maxProba) {
+    proba = (stochastic) ? proba + temp : std::max(proba, temp);
+    if (recCell && canSample(proba)) {
       recCell->event.type = ReconciliationEventType::EVENT_SL;
       recCell->event.lostSpeciesNode = f;
       recCell->event.pllDestSpeciesNode = this->getSpeciesRight(speciesNode);
@@ -395,8 +399,8 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     // - DL event
     temp = proba / (1.0 - (_uE[ec] * _PD[ec] * 2.0));
     scale(temp);
-    proba = temp;
-    if (recCell && proba > maxProba) {
+    proba = (stochastic) ? temp : proba; // can never be the ML event
+    if (recCell && canSample(proba)) {
       // in fact, nothing happens, we'll have to resample
       recCell->event.type = ReconciliationEventType::EVENT_DL;
       return true;
@@ -408,7 +412,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     return false; // we haven't sampled any event, this should not happen
   }
   if (proba > REAL(1.0)) {
-    Logger::error << "error: proba=" << proba << " (proba > 1)" << std::endl;
+    Logger::error << "error: proba=" << proba << " (proba > 1.0)" << std::endl;
     return false;
   }
   return true;

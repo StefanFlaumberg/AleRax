@@ -379,15 +379,26 @@ void AleEvaluator::sampleFamilyScenarios(
     unsigned int i, unsigned int samples,
     std::vector<std::shared_ptr<Scenario>> &scenarios) {
   assert(i < getLocalFamilyNumber());
+  bool ok = false;
   scenarios.clear();
-  bool ok = getEvaluation(i).sampleReconciliations(samples, scenarios);
+  if (!samples) {
+    scenarios.push_back(std::make_shared<Scenario>());
+    ok = getEvaluation(i).inferMLScenario(*scenarios[0]);
+  } else {
+    ok = getEvaluation(i).sampleReconciliations(samples, scenarios);
+  }
   if (_highPrecisions[i] == -1 && !ok) {
     // We are in the low precision mode (we use double)
     // and it's not accurate enough, switch to the high
     // precision mode and resample
-    scenarios.clear();
     resetEvaluation(i, true);
-    ok = getEvaluation(i).sampleReconciliations(samples, scenarios);
+    scenarios.clear();
+    if (!samples) {
+      scenarios.push_back(std::make_shared<Scenario>());
+      ok = getEvaluation(i).inferMLScenario(*scenarios[0]);
+    } else {
+      ok = getEvaluation(i).sampleReconciliations(samples, scenarios);
+    }
   }
   if (!ok) {
     // Couldn't sample even in the high precision mode!
@@ -401,7 +412,6 @@ void AleEvaluator::getTransferInformation(
     SpeciesTree &speciesTree, TransferFrequencies &transferFrequencies,
     PerSpeciesEvents &perSpeciesEvents,
     PerCorePotentialTransfers &potentialTransfers) {
-  // this is duplicated code from Routines...
   const auto labelToId = speciesTree.getTree().getDeterministicLabelToId();
   const auto idToLabel = speciesTree.getTree().getDeterministicIdToLabel();
   const unsigned int labelsNumber = idToLabel.size();
@@ -419,22 +429,14 @@ void AleEvaluator::getTransferInformation(
     mapping.fill(family.mappingFile, family.startingGeneTree);
     UndatedDTLMultiModel<ScaledValue> evaluation(speciesTree.getDatedTree(),
                                                  mapping, infoCopy, family.ccp);
-    std::vector<std::shared_ptr<Scenario>> scenarios;
-    // Warning:
-    // Using Random::getProba() in the sampling function makes
-    // the random state inconsistent between the MPI ranks.
-    // Call ParallelContext::makeRandConsistent() right after
-    // all MPI ranks passed the loop
-    bool ok = evaluation.sampleReconciliations(1, scenarios);
+    Scenario scenario;
+    bool ok = evaluation.inferMLScenario(scenario);
     assert(ok);
-    assert(scenarios.size() == 1);
-    auto &scenario = *scenarios[0];
     scenario.countTransfers(labelToId, transferFrequencies.count);
     scenario.gatherReconciliationStatistics(perSpeciesEvents);
     potentialTransfers.addScenario(scenario);
   }
   ParallelContext::barrier();
-  ParallelContext::makeRandConsistent();
   for (unsigned int i = 0; i < labelsNumber; ++i) {
     ParallelContext::sumVectorUInt(transferFrequencies.count[i]);
   }
