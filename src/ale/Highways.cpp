@@ -129,9 +129,8 @@ static bool compareHighwaysByProba(const ScoredHighway &a,
 void Highways::getSortedCandidatesFromList(
     AleOptimizer &optimizer, const std::vector<Highway> &highways,
     std::vector<ScoredHighway> &candidateHighways) {
-  Logger::timed
-      << "[Highway search] Sorting highways from the user-defined file"
-      << std::endl;
+  Logger::timed << "[Highway search] Sorting highways from the "
+                << "user-defined file" << std::endl;
   auto &speciesTree = optimizer.getSpeciesTree();
   unsigned int minTransfers = 1;
   MovesBlackList blacklist;
@@ -168,8 +167,7 @@ void Highways::getCandidateHighways(
     AleOptimizer &optimizer, std::vector<ScoredHighway> &candidateHighways,
     unsigned int maxCandidates) {
   Logger::timed << "[Highway search] Inferring highways from the predicted "
-                   "transfer directions"
-                << std::endl;
+                << "transfer directions" << std::endl;
   auto &speciesTree = optimizer.getSpeciesTree();
   unsigned int minTransfers = 2;
   MovesBlackList blacklist;
@@ -225,8 +223,7 @@ void Highways::filterCandidateHighways(
   FileSystem::mkdir(testPath, true);
   ParallelContext::barrier();
   Logger::timed << "[Highway search] Filtering candidate highways that "
-                   "increase LL by more than "
-                << minDiff << std::endl;
+                << "increase LL by more than " << minDiff << std::endl;
   double initialLL = evaluator.computeLikelihood();
   evaluator.saveSnapshotPerFamilyLL();
   Logger::timed << "initial ll=" << initialLL << std::endl;
@@ -252,8 +249,7 @@ void Highways::filterCandidateHighways(
     if (llDiff < minDiff) {
       proba = proba2;
       Logger::timed << "  No improvement with the small highway proba! Trying "
-                       "again with p="
-                    << proba << std::endl;
+                    << "again with p=" << proba << std::endl;
       // ditto, but with higher highway proba
       withHighwayLL = testHighwayFast(evaluator, highway, testPath, proba);
       llDiff = withHighwayLL - initialLL;
@@ -302,9 +298,8 @@ void Highways::optimizeAllHighways(
   auto &evaluator = optimizer.getEvaluator();
   double minProba =
       0.000001; // min highway proba after optimization to keep the candidate
-  Logger::timed
-      << "[Highway search] Trying to add all candidate highways simultaneously"
-      << std::endl;
+  Logger::timed << "[Highway search] Trying to add all candidate highways "
+                << "simultaneously" << std::endl;
   // jointly optimize highway probas of the filtered highways
   std::vector<Highway> highways;
   Parameters startingProbas;
