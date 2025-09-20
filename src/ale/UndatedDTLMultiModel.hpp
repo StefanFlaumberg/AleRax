@@ -162,12 +162,10 @@ void UndatedDTLMultiModel<REAL>::setHighways(
       hp.highway.dest = highway.dest;
     }
     // in the pruned mode a highway from/to a species not covered by the gene
-    // family may have the src or dest species absent or may look like a
-    // self-transfer
+    // family may have the src/dest species absent or look like a self-transfer
     if (!hp.highway.src || !hp.highway.dest ||
         (hp.highway.src == hp.highway.dest)) {
-      // this highway should not affect this gene family
-      continue;
+      continue; // this highway should not affect this gene family
     }
     // this value will be normalized later on, separately per category
     hp.proba.resize(_gammaCatNumber, highway.proba);
@@ -341,7 +339,7 @@ void UndatedDTLMultiModel<REAL>::recomputeSpeciesProbabilities() {
     possibleOriginationSpeciesNodes = &(this->getPrunedSpeciesNodes());
     break;
   case OriginationStrategy::ROOT:
-    speciesNodesBuffer.push_back(this->_speciesTree.getRoot());
+    speciesNodesBuffer.push_back(this->getPrunedRoot());
     possibleOriginationSpeciesNodes = &speciesNodesBuffer;
     break;
   case OriginationStrategy::LCA:

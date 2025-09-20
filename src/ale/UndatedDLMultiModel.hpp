@@ -174,7 +174,7 @@ void UndatedDLMultiModel<REAL>::recomputeSpeciesProbabilities() {
     possibleOriginationSpeciesNodes = &(this->getPrunedSpeciesNodes());
     break;
   case OriginationStrategy::ROOT:
-    speciesNodesBuffer.push_back(this->_speciesTree.getRoot());
+    speciesNodesBuffer.push_back(this->getPrunedRoot());
     possibleOriginationSpeciesNodes = &speciesNodesBuffer;
     break;
   case OriginationStrategy::LCA:
