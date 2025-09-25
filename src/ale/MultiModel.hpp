@@ -4,12 +4,6 @@
 #include <ccp/ConditionalClades.hpp>
 #include <likelihoods/reconciliation_models/BaseReconciliationModel.hpp>
 
-class GeneSpeciesMapping;
-class PLLRootedTree;
-class RecModelInfo;
-class ScaledValue;
-class Scenario;
-
 /**
  *  Temp storage for a clade event sampled in
  *  the reconciliation space
@@ -168,7 +162,7 @@ protected:
   // functions to work with CLVs
   virtual void allocateMemory() = 0;
   virtual void deallocateMemory() = 0;
-  virtual void updateCLV(CID cid) = 0;
+  virtual void updateCLV(CID cid, bool stochastic) = 0;
 
   /**
    *  Probability of an arbitrary gene family to originate
@@ -196,7 +190,7 @@ protected:
    */
   virtual bool
   computeProbability(CID cid, corax_rnode_t *speciesNode, unsigned int category,
-                     REAL &proba,
+                     REAL &proba, bool stochastic,
                      ReconciliationCell<REAL> *recCell = nullptr) = 0;
 
   /**
@@ -226,7 +220,13 @@ private:
   /**
    *  Fill CLV for each observed gene clade
    */
-  void updateCLVs();
+  void updateCLVs(bool stochastic = true);
+
+  /**
+   *  Jointly find the best category and species branch based on
+   *  the probability of the gene tree to be rooted in it
+   */
+  corax_rnode_t *inferMLOriginationSpecies(unsigned int &category);
 
   /**
    *  Jointly sample a category and a species branch based on
@@ -263,8 +263,8 @@ template <class REAL> double MultiModel<REAL>::computeLogLikelihood() {
     // initialize CLVs, as they have not been created with the model
     allocateMemory();
   }
-  // compute CLVs based on the recomputed per-branch probas
-  updateCLVs();
+  // compute stochastic CLVs based on recomputed per-branch probas
+  updateCLVs(true);
   // compute the species tree LL
   REAL res = REAL();
   std::vector<REAL> categoryLikelihoods(getGammaCatNumber(), REAL());
@@ -294,8 +294,19 @@ template <class REAL> double MultiModel<REAL>::computeLogLikelihood() {
 
 template <class REAL>
 bool MultiModel<REAL>::inferMLScenario(Scenario &scenario) {
-  assert(false); // not implemented for MultiModel
-  return computeScenario(scenario, false);
+  if (this->_memorySavings) {
+    // initialize CLVs, as they have not been created with the model
+    allocateMemory();
+  }
+  // compute ML CLVs based on recomputed per-branch probas
+  updateCLVs(false);
+  // sample and save the ML scenario
+  bool ok = computeScenario(scenario, false);
+  if (this->_memorySavings) {
+    // delete CLVs to use less RAM
+    deallocateMemory();
+  }
+  return ok;
 }
 
 template <class REAL>
@@ -305,8 +316,8 @@ bool MultiModel<REAL>::sampleReconciliations(
     // initialize CLVs, as they have not been created with the model
     allocateMemory();
   }
-  // compute CLVs based on the recomputed per-branch probas
-  updateCLVs();
+  // compute stochastic CLVs based on recomputed per-branch probas
+  updateCLVs(true);
   // sample and save scenarios
   bool ok = true;
   for (unsigned int i = 0; i < samples; ++i) {
@@ -322,16 +333,35 @@ bool MultiModel<REAL>::sampleReconciliations(
   return ok;
 }
 
-template <class REAL> void MultiModel<REAL>::updateCLVs() {
+template <class REAL> void MultiModel<REAL>::updateCLVs(bool stochastic) {
   // recompute the per-branch probas of elementary events
   this->beforeComputeCLVs();
   // perform updateCLV() for each observed gene clade:
   // postorder gene clade traversal is granted
   for (CID cid = 0; cid < this->_ccp.getCladesNumber(); ++cid) {
-    updateCLV(cid);
+    updateCLV(cid, stochastic);
   }
   this->_allSpeciesNodesInvalid = false;
   this->_invalidatedSpeciesNodes.clear();
+}
+
+template <class REAL>
+corax_rnode_t *
+MultiModel<REAL>::inferMLOriginationSpecies(unsigned int &category) {
+  corax_rnode_t *bestOrigination = nullptr;
+  auto maxLikelihood = REAL();
+  for (unsigned int c = 0; c < getGammaCatNumber(); ++c) {
+    for (auto speciesNode : this->getPrunedSpeciesNodes()) {
+      auto likelihood = getRootCladeLikelihood(speciesNode, c);
+      if (likelihood > maxLikelihood) {
+        maxLikelihood = likelihood;
+        category = c;
+        bestOrigination = speciesNode;
+      }
+    }
+  }
+  assert(bestOrigination);
+  return bestOrigination;
 }
 
 template <class REAL>
@@ -360,11 +390,11 @@ MultiModel<REAL>::sampleOriginationSpecies(unsigned int &category) {
 
 template <class REAL>
 bool MultiModel<REAL>::computeScenario(Scenario &scenario, bool stochastic) {
-  assert(stochastic);
   auto rootCID = this->_ccp.getCladesNumber() - 1;
   // sample rate category and origination species
   unsigned int category = 0;
-  auto originationSpecies = sampleOriginationSpecies(category);
+  auto originationSpecies = (stochastic) ? sampleOriginationSpecies(category)
+                                         : inferMLOriginationSpecies(category);
   // init scenario
   scenario.setSpeciesTree(&this->_speciesTree);
   auto geneRoot = scenario.generateGeneRoot();
@@ -382,35 +412,41 @@ bool MultiModel<REAL>::backtrace(CID cid, corax_rnode_t *speciesNode,
                                  corax_unode_t *geneNode, unsigned int category,
                                  Scenario &scenario, bool stochastic) {
   auto c = category;
-  // compute the probability of the clade on the species branch
-  // under all possible scenarios
   REAL proba;
-  if (!computeProbability(cid, speciesNode, c, proba)) {
+  // compute the probability of the clade on the species branch
+  // to obtain the sampling probability from it further
+  if (!computeProbability(cid, speciesNode, c, proba, stochastic)) {
     return false;
   }
-  // set sampling probability and sample a clade event of the clade
-  // on the species branch
+  if (proba == REAL()) {
+    Logger::error << "error: proba=" << proba << " (zero proba)" << std::endl;
+    return false; // the clade could not be sampled on the recursion prev step
+  }
+  // create a recCell, set its sampling probability and sample
+  // a stochastic/the ML event of the clade on the species branch
   ReconciliationCell<REAL> recCell;
-  recCell.event.previousType = scenario.getLastEventType();
-  recCell.maxProba = getRandom(proba);
-  if (!computeProbability(cid, speciesNode, c, proba, &recCell)) {
+  recCell.maxProba = (stochastic) ? getRandom(proba) : proba;
+  if (!computeProbability(cid, speciesNode, c, proba, stochastic, &recCell)) {
     return false;
   }
-  // overwrite the recCell's self gene node index:
-  // replace the cid of the current clade with
-  // the current node index of the reconciled gene tree
+  // fill the recCell's event fields:
+  // - the current node index of the reconciled gene tree
+  // - the current species node index
+  // - the type of the previous event in the scenario
   if (scenario.getGeneNodeBuffer().size() == 1) {
     recCell.event.geneNode = scenario.getVirtualRootIndex();
   } else {
     recCell.event.geneNode = geneNode->node_index;
   }
-  // overwrite the recCell's child node indices:
+  recCell.event.speciesNode = speciesNode->node_index;
+  recCell.event.previousType = scenario.getLastEventType();
+  // overwrite the recCell's event child node indices:
   // replace the cids of the sampled child clades with
   // the accordingly built child nodes of the reconciled gene tree
   CID leftCid = 0;
   CID rightCid = 0;
-  corax_unode_t *leftGeneNode;
-  corax_unode_t *rightGeneNode;
+  corax_unode_t *leftGeneNode = nullptr;
+  corax_unode_t *rightGeneNode = nullptr;
   if (recCell.event.type == ReconciliationEventType::EVENT_S ||
       recCell.event.type == ReconciliationEventType::EVENT_D ||
       recCell.event.type == ReconciliationEventType::EVENT_T) {
@@ -424,7 +460,7 @@ bool MultiModel<REAL>::backtrace(CID cid, corax_rnode_t *speciesNode,
     recCell.event.leftGeneIndex = leftGeneNode->node_index;
     recCell.event.rightGeneIndex = rightGeneNode->node_index;
   }
-  // add the overwritten recCell event to the scenario
+  // add the overwritten recCell's event to the scenario
   bool addEvent = true;
   if (recCell.event.type == ReconciliationEventType::EVENT_DL ||
       (recCell.event.type == ReconciliationEventType::EVENT_TL &&

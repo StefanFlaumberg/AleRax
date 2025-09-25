@@ -98,7 +98,7 @@ public:
 
   // output
   std::string output;
-  unsigned int geneTreeSamples;
+  int geneTreeSamples;
   bool cleanupCCP;
 
   // random seed

@@ -76,7 +76,7 @@ AleArguments::AleArguments(int iargc, char **iargv)
     } else if (arg == "--model-parametrization") {
       std::string temp(argv[++i]);
       modelParametrization = Enums::strToModelParametrization(temp);
-      if (ModelParametrization::CUSTOM == modelParametrization) {
+      if (modelParametrization == ModelParametrization::CUSTOM) {
         optimizationClassFile = temp;
       }
     } else if (arg == "--speciation-gamma-categories") {
@@ -307,8 +307,19 @@ void AleArguments::printSummary() const {
                  << "filtering the candidates: " << highwayCandidatesStep2
                  << std::endl;
   }
-  Logger::info << "\tNumber of reconciled gene trees to sample: "
-               << geneTreeSamples << std::endl;
+  Logger::info << "\tNumber of reconciled gene trees to sample: ";
+  switch (geneTreeSamples) {
+  case -1:
+    Logger::info << "1 ML tree" << std::endl;
+    break;
+  case 0:
+    Logger::info << 0 << std::endl;
+    break;
+  default:
+    Logger::info << "1 ML + " << geneTreeSamples << " stochastic trees"
+                 << std::endl;
+    break;
+  }
   Logger::info << "\tAleRax will exclude gene families covering less than "
                << minCoveredSpecies << " species" << std::endl;
   if (trimFamilyRatio != DEFAULT_TRIM_FAMILY_RATIO) {
@@ -338,7 +349,9 @@ void AleArguments::printHelp() const {
   Logger::info << "\t-s, --species-tree <SPECIES TREE> "
                << "{Random, MiniNJ, <filepath>}" << std::endl;
   Logger::info << "\t-p, --prefix <OUTPUT DIR>" << std::endl;
-  Logger::info << "\t-g, --gene-tree-samples <number of samples>" << std::endl;
+  Logger::info << "\t-g, --gene-tree-samples <number of samples> "
+               << "{-1 (1 ML), 0 (none), <n> (1 ML + n stochastic)}"
+               << std::endl;
   Logger::info << "\t--seed <seed>" << std::endl;
   Logger::info << "\t--cleanup-ccp" << std::endl;
 
@@ -541,6 +554,12 @@ void AleArguments::checkValid() const {
     ok = false;
     Logger::info << "\nError: --ccp-sample-frequency can only take "
                  << "values >= 1" << std::endl;
+  }
+  // output block
+  if (geneTreeSamples < -1) {
+    ok = false;
+    Logger::info << "\nError: --gene-tree-samples can only take "
+                 << "values >= -1" << std::endl;
   }
   // final
   if (!ok) {
