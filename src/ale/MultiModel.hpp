@@ -4,12 +4,6 @@
 #include <ccp/ConditionalClades.hpp>
 #include <likelihoods/reconciliation_models/BaseReconciliationModel.hpp>
 
-class GeneSpeciesMapping;
-class PLLRootedTree;
-class RecModelInfo;
-class ScaledValue;
-class Scenario;
-
 /**
  *  Temp storage for a clade event sampled in
  *  the reconciliation space
@@ -47,12 +41,6 @@ public:
     (void)(highways);
   }
 
-  virtual void onSpeciesTreeChange(
-      const std::unordered_set<corax_rnode_t *> *nodesToInvalidate) {
-    BaseReconciliationModel::onSpeciesTreeChange(nodesToInvalidate);
-    updateSpeciesToPrunedNode();
-  }
-
   virtual double computeLogLikelihood() = 0;
 
   virtual bool inferMLScenario(Scenario &scenario) = 0;
@@ -62,25 +50,16 @@ public:
                         std::vector<std::shared_ptr<Scenario>> &scenarios) = 0;
 
 protected:
-  // get the LCA of all species covered by the gene family
-  corax_rnode_t *getCoveredSpeciesLCA() {
-    return _speciesToPrunedNode[this->getPrunedRoot()->node_index];
-  }
-
   // should be called on changing model rates (alpha/DTLO/
   // highways), as the LLs computed earlier become irrelevant
   void resetCache() { _llCache.clear(); }
 
 private:
   virtual void mapGenesToSpecies();
-  // map each species node not covered by the gene family
-  // to its closest covered child if any
-  void updateSpeciesToPrunedNode();
 
 protected:
   const bool _memorySavings;
   ConditionalClades _ccp;
-  std::vector<corax_rnode_t *> _speciesToPrunedNode;
   std::unordered_map<size_t, double> _llCache;
 };
 
@@ -104,32 +83,6 @@ inline void MultiModelInterface::mapGenesToSpecies() {
   // build the pruned species tree representation based
   // on the species coverage
   onSpeciesTreeChange(nullptr);
-}
-
-inline void MultiModelInterface::updateSpeciesToPrunedNode() {
-  if (!_speciesToPrunedNode.size()) {
-    _speciesToPrunedNode.resize(this->getAllSpeciesNodeNumber());
-  }
-  std::fill(_speciesToPrunedNode.begin(), _speciesToPrunedNode.end(), nullptr);
-  for (auto speciesNode : this->getAllSpeciesNodes()) {
-    auto e = speciesNode->node_index;
-    if (speciesNode->left) {
-      auto left = speciesNode->left->node_index;
-      auto right = speciesNode->right->node_index;
-      if (_speciesToPrunedNode[left] && _speciesToPrunedNode[right]) {
-        // this node belongs to the pruned nodes
-        _speciesToPrunedNode[e] = speciesNode;
-      } else if (_speciesToPrunedNode[left]) {
-        _speciesToPrunedNode[e] = _speciesToPrunedNode[left];
-      } else if (_speciesToPrunedNode[right]) {
-        _speciesToPrunedNode[e] = _speciesToPrunedNode[right];
-      } // else do nothing
-    } else {
-      if (this->_speciesCoverage[e]) {
-        _speciesToPrunedNode[e] = speciesNode;
-      }
-    }
-  }
 }
 
 /**
@@ -282,7 +235,7 @@ template <class REAL> double MultiModel<REAL>::computeLogLikelihood() {
   // normalize by the number of categories
   res /= static_cast<double>(getGammaCatNumber());
   scale(res);
-  auto ll = log(res);
+  auto ll = getLog(res);
   // remember the computed LL for this species tree
   this->_llCache[hash] = ll;
   if (this->_memorySavings) {
