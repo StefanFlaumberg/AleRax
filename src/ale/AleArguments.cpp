@@ -1,5 +1,7 @@
 #include "AleArguments.hpp"
 
+#include <cstdlib>
+
 #include <IO/Logger.hpp>
 #include <parallelization/ParallelContext.hpp>
 
@@ -35,6 +37,12 @@ AleArguments::AleArguments(int iargc, char **iargv)
     printHelp();
     ParallelContext::abort(0);
   }
+  auto printDeprecated = [](const std::string &oldArg,
+                            const std::string &newArg) {
+    Logger::info << "Warning: " << oldArg
+                 << " is deprecated and has been replaced with " << newArg
+                 << std::endl;
+  };
   for (int i = 1; i < argc; ++i) {
     std::string arg(argv[i]);
     if (arg == "-h" || arg == "--help") {
@@ -76,7 +84,7 @@ AleArguments::AleArguments(int iargc, char **iargv)
     } else if (arg == "--model-parametrization") {
       std::string temp(argv[++i]);
       modelParametrization = Enums::strToModelParametrization(temp);
-      if (ModelParametrization::CUSTOM == modelParametrization) {
+      if (modelParametrization == ModelParametrization::CUSTOM) {
         optimizationClassFile = temp;
       }
     } else if (arg == "--speciation-gamma-categories") {
@@ -121,13 +129,38 @@ AleArguments::AleArguments(int iargc, char **iargv)
       randomSpeciesRoot = true;
     } else if (arg == "--verbose-opt") {
       optVerbose = true;
-    } else if (arg == "--per-family-rates" || arg == "--per-species-rates") {
-      Logger::info << "\nError: --per-family-rates and --per-species-rates are "
-                   << "deprecated and have been replaced with "
-                   << "--model-parametrization PER-FAMILY and "
-                   << "--model-parametrization PER-SPECIES\n"
-                   << std::endl;
-      ParallelContext::abort(0);
+      /* start recently renamed options */
+    } else if (arg == "--per-family-rates") {
+      printDeprecated(arg, "--model-parametrization PER-FAMILY");
+      modelParametrization = ModelParametrization::PER_FAMILY;
+    } else if (arg == "--per-species-rates") {
+      printDeprecated(arg, "--model-parametrization PER-SPECIES");
+      modelParametrization = ModelParametrization::PER_SPECIES;
+    } else if (arg == "--speciation-probability-categories") {
+      printDeprecated(arg, "--speciation-gamma-categories");
+      gammaCategories = atoi(argv[++i]);
+    } else if (arg == "--rec-opt") {
+      printDeprecated(arg, "--rate-optimizer");
+      recOpt = ArgumentsHelper::strToRecOpt(std::string(argv[++i]));
+    } else if (arg == "--highway-candidate-file") {
+      printDeprecated(arg, "--highway-candidates-file");
+      highwayCandidateFile = std::string(argv[++i]);
+    } else if (arg == "--highway-candidate-step1") {
+      printDeprecated(arg, "--highway-candidates-step1");
+      highwayCandidatesStep1 = atoi(argv[++i]);
+    } else if (arg == "--highway-candidate-step2") {
+      printDeprecated(arg, "--highway-candidates-step2");
+      highwayCandidatesStep2 = atoi(argv[++i]);
+    } else if (arg == "--skip-ratio") {
+      printDeprecated(arg, "--trim-ratio");
+      trimFamilyRatio = atof(argv[++i]);
+    } else if (arg == "--gene-tree-sample-frequency") {
+      printDeprecated(arg, "--ccp-sample-frequency");
+      sampleFrequency = atoi(argv[++i]);
+    } else if (arg == "--verbose-opt-rates") {
+      printDeprecated(arg, "--verbose-opt");
+      optVerbose = true;
+      /* end recently renamed options */
     } else {
       Logger::info << "\nUnknown argument " << arg << "\n" << std::endl;
       ParallelContext::abort(0);
