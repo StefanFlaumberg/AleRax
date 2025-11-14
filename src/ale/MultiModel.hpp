@@ -4,12 +4,6 @@
 #include <ccp/ConditionalClades.hpp>
 #include <likelihoods/reconciliation_models/BaseReconciliationModel.hpp>
 
-class GeneSpeciesMapping;
-class PLLRootedTree;
-class RecModelInfo;
-class ScaledValue;
-class Scenario;
-
 /**
  *  Temp storage for a clade event sampled in
  *  the reconciliation space
@@ -47,12 +41,6 @@ public:
     (void)(highways);
   }
 
-  virtual void onSpeciesTreeChange(
-      const std::unordered_set<corax_rnode_t *> *nodesToInvalidate) {
-    BaseReconciliationModel::onSpeciesTreeChange(nodesToInvalidate);
-    updateSpeciesToPrunedNode();
-  }
-
   virtual double computeLogLikelihood() = 0;
 
   virtual bool inferMLScenario(Scenario &scenario) = 0;
@@ -62,25 +50,16 @@ public:
                         std::vector<std::shared_ptr<Scenario>> &scenarios) = 0;
 
 protected:
-  // get the LCA of all species covered by the gene family
-  corax_rnode_t *getCoveredSpeciesLCA() {
-    return _speciesToPrunedNode[this->getPrunedRoot()->node_index];
-  }
-
-  // should be called on changing model rates (alpha/DTLO/
+  // should be called on changing the model rates (alpha/DTLO/
   // highways), as the LLs computed earlier become irrelevant
   void resetCache() { _llCache.clear(); }
 
 private:
   virtual void mapGenesToSpecies();
-  // map each species node not covered by the gene family
-  // to its closest covered child if any
-  void updateSpeciesToPrunedNode();
 
 protected:
   const bool _memorySavings;
   ConditionalClades _ccp;
-  std::vector<corax_rnode_t *> _speciesToPrunedNode;
   std::unordered_map<size_t, double> _llCache;
 };
 
@@ -104,32 +83,6 @@ inline void MultiModelInterface::mapGenesToSpecies() {
   // build the pruned species tree representation based
   // on the species coverage
   onSpeciesTreeChange(nullptr);
-}
-
-inline void MultiModelInterface::updateSpeciesToPrunedNode() {
-  if (!_speciesToPrunedNode.size()) {
-    _speciesToPrunedNode.resize(this->getAllSpeciesNodeNumber());
-  }
-  std::fill(_speciesToPrunedNode.begin(), _speciesToPrunedNode.end(), nullptr);
-  for (auto speciesNode : this->getAllSpeciesNodes()) {
-    auto e = speciesNode->node_index;
-    if (speciesNode->left) {
-      auto left = speciesNode->left->node_index;
-      auto right = speciesNode->right->node_index;
-      if (_speciesToPrunedNode[left] && _speciesToPrunedNode[right]) {
-        // this node belongs to the pruned nodes
-        _speciesToPrunedNode[e] = speciesNode;
-      } else if (_speciesToPrunedNode[left]) {
-        _speciesToPrunedNode[e] = _speciesToPrunedNode[left];
-      } else if (_speciesToPrunedNode[right]) {
-        _speciesToPrunedNode[e] = _speciesToPrunedNode[right];
-      } // else do nothing
-    } else {
-      if (this->_speciesCoverage[e]) {
-        _speciesToPrunedNode[e] = speciesNode;
-      }
-    }
-  }
 }
 
 /**
@@ -263,7 +216,7 @@ template <class REAL> double MultiModel<REAL>::computeLogLikelihood() {
     // initialize CLVs, as they have not been created with the model
     allocateMemory();
   }
-  // compute CLVs based on the recomputed per-branch probas
+  // compute CLVs based on recomputed per-branch probas
   updateCLVs();
   // compute the species tree LL
   REAL res = REAL();
@@ -282,7 +235,7 @@ template <class REAL> double MultiModel<REAL>::computeLogLikelihood() {
   // normalize by the number of categories
   res /= static_cast<double>(getGammaCatNumber());
   scale(res);
-  auto ll = log(res);
+  auto ll = getLog(res);
   // remember the computed LL for this species tree
   this->_llCache[hash] = ll;
   if (this->_memorySavings) {
@@ -305,7 +258,7 @@ bool MultiModel<REAL>::sampleReconciliations(
     // initialize CLVs, as they have not been created with the model
     allocateMemory();
   }
-  // compute CLVs based on the recomputed per-branch probas
+  // compute CLVs based on recomputed per-branch probas
   updateCLVs();
   // sample and save scenarios
   bool ok = true;
@@ -382,35 +335,37 @@ bool MultiModel<REAL>::backtrace(CID cid, corax_rnode_t *speciesNode,
                                  corax_unode_t *geneNode, unsigned int category,
                                  Scenario &scenario, bool stochastic) {
   auto c = category;
-  // compute the probability of the clade on the species branch
-  // under all possible scenarios
   REAL proba;
+  // compute the probability of the clade on the species branch
+  // to obtain the sampling probability from it further
   if (!computeProbability(cid, speciesNode, c, proba)) {
     return false;
   }
-  // set sampling probability and sample a clade event of the clade
-  // on the species branch
+  // create a recCell, set its sampling probability and sample
+  // an event of the clade on the species branch
   ReconciliationCell<REAL> recCell;
-  recCell.event.previousType = scenario.getLastEventType();
   recCell.maxProba = getRandom(proba);
   if (!computeProbability(cid, speciesNode, c, proba, &recCell)) {
     return false;
   }
-  // overwrite the recCell's self gene node index:
-  // replace the cid of the current clade with
-  // the current node index of the reconciled gene tree
+  // fill the recCell's event fields:
+  // - the current node index of the reconciled gene tree
+  // - the current species node index
+  // - the type of the previous event in the scenario
   if (scenario.getGeneNodeBuffer().size() == 1) {
     recCell.event.geneNode = scenario.getVirtualRootIndex();
   } else {
     recCell.event.geneNode = geneNode->node_index;
   }
-  // overwrite the recCell's child node indices:
+  recCell.event.speciesNode = speciesNode->node_index;
+  recCell.event.previousType = scenario.getLastEventType();
+  // overwrite the recCell's event child node indices:
   // replace the cids of the sampled child clades with
   // the accordingly built child nodes of the reconciled gene tree
   CID leftCid = 0;
   CID rightCid = 0;
-  corax_unode_t *leftGeneNode;
-  corax_unode_t *rightGeneNode;
+  corax_unode_t *leftGeneNode = nullptr;
+  corax_unode_t *rightGeneNode = nullptr;
   if (recCell.event.type == ReconciliationEventType::EVENT_S ||
       recCell.event.type == ReconciliationEventType::EVENT_D ||
       recCell.event.type == ReconciliationEventType::EVENT_T) {
@@ -424,7 +379,7 @@ bool MultiModel<REAL>::backtrace(CID cid, corax_rnode_t *speciesNode,
     recCell.event.leftGeneIndex = leftGeneNode->node_index;
     recCell.event.rightGeneIndex = rightGeneNode->node_index;
   }
-  // add the overwritten recCell event to the scenario
+  // add the overwritten recCell's event to the scenario
   bool addEvent = true;
   if (recCell.event.type == ReconciliationEventType::EVENT_DL ||
       (recCell.event.type == ReconciliationEventType::EVENT_TL &&

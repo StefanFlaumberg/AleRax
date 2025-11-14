@@ -226,7 +226,7 @@ void UndatedDLMultiModel<REAL>::recomputeSpeciesProbabilities() {
           auto g = this->getSpeciesRight(speciesNode)->node_index;
           auto fc = f * _gammaCatNumber + c;
           auto gc = g * _gammaCatNumber + c;
-          temp = _uE[fc] * (_uE[gc] * _PS[ec]); // SEE scenario
+          temp = _uE[fc] * _uE[gc] * _PS[ec]; // SEE scenario
         } else {
           // terminal branch
           temp = REAL(_PS[ec] * this->_fm[e]); // S but not observed scenario
@@ -234,7 +234,7 @@ void UndatedDLMultiModel<REAL>::recomputeSpeciesProbabilities() {
         scale(temp);
         proba += temp;
         // DEE scenario
-        temp = _uE[ec] * (_uE[ec] * _PD[ec]);
+        temp = _uE[ec] * _uE[ec] * _PD[ec];
         scale(temp);
         proba += temp;
         assert(proba < REAL(1.000001));
@@ -303,8 +303,6 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
   }
   REAL maxProba = REAL();
   if (recCell) {
-    recCell->event.geneNode = cid;
-    recCell->event.speciesNode = e;
     maxProba = recCell->maxProba;
   }
   // S events on terminal species branches can happen
@@ -371,7 +369,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
   // for any of gene nodes:
   // - SL event (only on an internal species branch)
   if (!isSpeciesLeaf) {
-    temp = _dlclvs[cid][fc] * (_uE[gc] * _PS[ec]);
+    temp = _dlclvs[cid][fc] * _uE[gc] * _PS[ec];
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -381,7 +379,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
       recCell->event.pllLostSpeciesNode = this->getSpeciesRight(speciesNode);
       return true;
     }
-    temp = _dlclvs[cid][gc] * (_uE[fc] * _PS[ec]);
+    temp = _dlclvs[cid][gc] * _uE[fc] * _PS[ec];
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -409,7 +407,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
     return false; // we haven't sampled any event, this should not happen
   }
   if (proba > REAL(1.0)) {
-    Logger::error << "error: proba=" << proba << " (proba > 1)" << std::endl;
+    Logger::error << "error: proba=" << proba << " (proba > 1.0)" << std::endl;
     return false;
   }
   return true;
