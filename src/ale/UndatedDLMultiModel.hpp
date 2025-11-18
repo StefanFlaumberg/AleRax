@@ -369,7 +369,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
   // for any of gene nodes:
   // - SL event (only on an internal species branch)
   if (!isSpeciesLeaf) {
-    temp = _dlclvs[cid][fc] * _uE[gc] * _PS[ec];
+    temp = _dlclvs[cid][fc] * (_uE[gc] * _PS[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -379,7 +379,7 @@ bool UndatedDLMultiModel<REAL>::computeProbability(
       recCell->event.pllLostSpeciesNode = this->getSpeciesRight(speciesNode);
       return true;
     }
-    temp = _dlclvs[cid][gc] * _uE[fc] * _PS[ec];
+    temp = _dlclvs[cid][gc] * (_uE[fc] * _PS[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {

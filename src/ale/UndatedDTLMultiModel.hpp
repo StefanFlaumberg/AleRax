@@ -597,8 +597,8 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
       return true;
     }
     // - T event
-    temp = _dtlclvs[cidLeft]._uq[ec] * _dtlclvs[cidRight]._tq[ec] *
-           (_PT[ec] * freq);
+    temp = _dtlclvs[cidLeft]._uq[ec] *
+           (_dtlclvs[cidRight]._tq[ec] * (_PT[ec] * freq));
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -612,8 +612,8 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
       recCell->blRight = cladeSplit.blRight;
       return true;
     }
-    temp = _dtlclvs[cidRight]._uq[ec] * _dtlclvs[cidLeft]._tq[ec] *
-           (_PT[ec] * freq);
+    temp = _dtlclvs[cidRight]._uq[ec] *
+           (_dtlclvs[cidLeft]._tq[ec] * (_PT[ec] * freq));
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -631,8 +631,8 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
     for (const auto &highway : _highways[e]) {
       auto d = highway.highway.dest->node_index;
       auto dc = d * _gammaCatNumber + c;
-      temp = _dtlclvs[cidLeft]._uq[ec] * _dtlclvs[cidRight]._uq[dc] *
-             (highway.proba[c] * freq);
+      temp = _dtlclvs[cidLeft]._uq[ec] *
+             (_dtlclvs[cidRight]._uq[dc] * (highway.proba[c] * freq));
       scale(temp);
       proba += temp;
       if (proba > REAL(1.0)) {
@@ -650,8 +650,8 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
         recCell->blRight = cladeSplit.blRight;
         return true;
       }
-      temp = _dtlclvs[cidRight]._uq[ec] * _dtlclvs[cidLeft]._uq[dc] *
-             (highway.proba[c] * freq);
+      temp = _dtlclvs[cidRight]._uq[ec] *
+             (_dtlclvs[cidLeft]._uq[dc] * (highway.proba[c] * freq));
       scale(temp);
       proba += temp;
       if (proba > REAL(1.0)) {
@@ -675,7 +675,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
   // for any of gene nodes:
   // - SL event (only on an internal species branch)
   if (!isSpeciesLeaf) {
-    temp = _dtlclvs[cid]._uq[fc] * _uE[gc] * _PS[ec];
+    temp = _dtlclvs[cid]._uq[fc] * (_uE[gc] * _PS[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -685,7 +685,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
       recCell->event.pllLostSpeciesNode = this->getSpeciesRight(speciesNode);
       return true;
     }
-    temp = _dtlclvs[cid]._uq[gc] * _uE[fc] * _PS[ec];
+    temp = _dtlclvs[cid]._uq[gc] * (_uE[fc] * _PS[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -711,7 +711,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
   } else { // TL events allowed
     if (!this->_info.noDL) {
       // - DL event
-      temp = _dtlclvs[cid]._uq[ec] * _uE[ec] * (_PD[ec] * 2.0);
+      temp = _dtlclvs[cid]._uq[ec] * (_uE[ec] * _PD[ec] * 2.0);
       scale(temp);
       proba += temp;
       if (recCell && proba > maxProba) {
@@ -722,7 +722,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
     }
     // - TL event
     // we transfer, but the gene gets extinct in the receiving species
-    temp = _dtlclvs[cid]._uq[ec] * _tE[ec] * _PT[ec];
+    temp = _dtlclvs[cid]._uq[ec] * (_tE[ec] * _PT[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -732,7 +732,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
       return true;
     }
     // we transfer, and the gene gets extinct in the sending species
-    temp = _dtlclvs[cid]._tq[ec] * _uE[ec] * _PT[ec];
+    temp = _dtlclvs[cid]._tq[ec] * (_uE[ec] * _PT[ec]);
     scale(temp);
     proba += temp;
     if (recCell && proba > maxProba) {
@@ -747,7 +747,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
       auto d = highway.highway.dest->node_index;
       auto dc = d * _gammaCatNumber + c;
       // we transfer, but the gene gets extinct in the receiving species
-      temp = _dtlclvs[cid]._uq[ec] * _uE[dc] * highway.proba[c];
+      temp = _dtlclvs[cid]._uq[ec] * (_uE[dc] * highway.proba[c]);
       scale(temp);
       proba += temp;
       if (recCell && proba > maxProba) {
@@ -757,7 +757,7 @@ bool UndatedDTLMultiModel<REAL>::computeProbability(
         return true;
       }
       // we transfer, and the gene gets extinct in the sending species
-      temp = _dtlclvs[cid]._uq[dc] * _uE[ec] * highway.proba[c];
+      temp = _dtlclvs[cid]._uq[dc] * (_uE[ec] * highway.proba[c]);
       scale(temp);
       proba += temp;
       if (recCell && proba > maxProba) {
