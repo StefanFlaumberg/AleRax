@@ -34,32 +34,6 @@ private:
   AleEvaluator &_evaluator;
 };
 
-static bool isHighwayCompatible(const Highway &highway,
-                                const RecModelInfo &info,
-                                const DatedTree &tree) {
-  auto from = highway.src;
-  auto to = highway.dest;
-  switch (info.transferConstraint) {
-  case TransferConstaint::NONE:
-    if (to == from) {
-      return false;
-    }
-    return true;
-  case TransferConstaint::PARENTS:
-    while (from) {
-      if (to == from) {
-        return false;
-      }
-      from = from->parent;
-    }
-    return true;
-  case TransferConstaint::RELDATED:
-    return tree.canTransferUnderRelDated(from->node_index, to->node_index);
-  }
-  assert(false);
-  return false;
-}
-
 static double testHighwayFast(AleEvaluator &evaluator, const Highway &highway,
                               const std::string &directory,
                               double highwayProba) {
@@ -212,7 +186,7 @@ void Highways::filterCandidateHighways(
     AleOptimizer &optimizer,
     const std::vector<ScoredHighway> &candidateHighways,
     std::vector<ScoredHighway> &filteredHighways, unsigned int maxCandidates) {
-  auto &speciesTree = optimizer.getSpeciesTree();
+  auto &datedTree = optimizer.getSpeciesTree().getDatedTree();
   auto &evaluator = optimizer.getEvaluator();
   double proba1 = 0.01;  // small hardcoded highway proba
   double proba2 = 0.1;   // higher hardcoded highway proba
@@ -231,8 +205,9 @@ void Highways::filterCandidateHighways(
   for (const auto &candidate : candidateHighways) {
     auto highway = candidate.highway;
     // reject the highway if it is incompatible with the transfer constraint
-    if (!isHighwayCompatible(highway, optimizer.getRecModelInfo(),
-                             speciesTree.getDatedTree())) {
+    if (!datedTree.canTransfer(
+            highway.src->node_index, highway.dest->node_index,
+            optimizer.getRecModelInfo().transferConstraint)) {
       Logger::timed << "Rejecting (incompatible) candidate: "
                     << highway.src->label << "->" << highway.dest->label
                     << std::endl;

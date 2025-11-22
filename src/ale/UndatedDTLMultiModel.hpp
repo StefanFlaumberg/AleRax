@@ -43,12 +43,11 @@ private:
   std::vector<double> _OP; // Origination probability, per species branch
   std::vector<REAL> _uE;   // Extinction probability, per species branch
   std::vector<REAL> _tE; // Transfer-extinction probability, per species branch
+  std::vector<unsigned int> _tN; // Allowed transfer number, per species branch
   OriginationStrategy _originationStrategy;
   TransferConstaint _transferConstraint;
-  // Forbidden transfers, per species branch
-  std::vector<std::vector<corax_rnode_t *>> _transferForbiddenSpeciesNodes;
-  // Allowed transfers, per species branch
-  std::vector<std::vector<corax_rnode_t *>> _transferCandidateSpeciesNodes;
+  // Pruned species nodes, in postorder or reverse speciation order
+  std::vector<corax_rnode_t *> _orderedPrunedSpeciesNodes;
 
   struct DTLCLV {
     // Element e of the gene clade's _uq stores the probability of the clade,
@@ -81,15 +80,9 @@ private:
                                   unsigned int category, REAL &proba,
                                   ReconciliationCell<REAL> *recCell = nullptr);
 
-  // functions to deal with transfers
-  void updateTransferCandidates();
+  // functions to work with transfers
   bool sampleTransferEvent(CID cid, corax_rnode_t *srcSpeciesNode,
                            unsigned int category, Scenario::Event &event);
-
-  double getTransferWeightNorm(unsigned int speciesNodeIndex) const {
-    auto e = speciesNodeIndex;
-    return static_cast<double>(_transferCandidateSpeciesNodes[e].size());
-  }
 
   // functions to work with _llCache
   virtual size_t getHash() {
@@ -119,6 +112,7 @@ UndatedDTLMultiModel<REAL>::UndatedDTLMultiModel(
           1.0 / static_cast<double>(this->getAllSpeciesNodeNumber())),
       _uE(this->getAllSpeciesNodeNumber() * _gammaCatNumber, REAL()),
       _tE(this->getAllSpeciesNodeNumber() * _gammaCatNumber, REAL()),
+      _tN(this->getAllSpeciesNodeNumber(), 0),
       _originationStrategy(info.originationStrategy),
       _transferConstraint(info.transferConstraint) {
   auto N = this->getAllSpeciesNodeNumber();
@@ -127,10 +121,8 @@ UndatedDTLMultiModel<REAL>::UndatedDTLMultiModel(
   // set all DTLO rates to the default value
   _dtlRates.resize(this->_info.modelFreeParameters(),
                    std::vector<double>(N, 0.2));
-  // initialize highways and per-species transfer candidates
+  // initialize highways
   _highways.resize(N);
-  _transferForbiddenSpeciesNodes.resize(N);
-  _transferCandidateSpeciesNodes.resize(N);
   // initialize DTLCLVs if needed
   if (!this->_memorySavings) {
     allocateMemory();
@@ -207,82 +199,66 @@ template <class REAL> void UndatedDTLMultiModel<REAL>::updateCLV(CID cid) {
   auto &tq = _dtlclvs[cid]._tq;
   std::fill(uq.begin(), uq.end(), REAL());
   std::fill(tq.begin(), tq.end(), REAL());
+  bool stochastic = true;
+  auto sumOrMax = [stochastic](const REAL &v1, const REAL &v2) {
+    return (stochastic) ? v1 + v2 : std::max(v1, v2);
+  };
   // iterate several times to resolve the DL and TL terms with
   // fixed point optimization: not needed if we don't model TL
   unsigned int maxIt = this->_info.noTL ? 1 : 4;
   for (unsigned int it = 0; it < maxIt; ++it) {
     bool ok;
     for (unsigned int c = 0; c < _gammaCatNumber; ++c) {
-      REAL transferSum = REAL();
+      REAL temp = REAL();
+      // compute _uq
       // postorder species tree traversal is granted
-      for (auto speciesNode : this->getPrunedSpeciesNodes()) {
+      for (auto speciesNode : _orderedPrunedSpeciesNodes) {
         auto e = speciesNode->node_index;
         auto ec = e * _gammaCatNumber + c;
-        REAL p = REAL();
+        REAL p;
         ok = computeProbability(cid, speciesNode, c, p);
         assert(ok);
-        transferSum += p;
         uq[ec] = p;
+        // store the uncorrected transfer proba
+        tq[ec] = temp;
+        temp = sumOrMax(temp, p);
       }
+      // compute _tq
       // now that we've got the clade proba on every species branch,
       // we can compute the clade transfer probas
-      for (auto speciesNode : this->getPrunedSpeciesNodes()) {
+      std::stack<REAL> correctionStack({REAL()});
+      std::vector<unsigned int> stackRanks(_orderedPrunedSpeciesNodes.size(),
+                                           0);
+      for (unsigned int i = _orderedPrunedSpeciesNodes.size(); i > 0; --i) {
+        auto speciesNode = _orderedPrunedSpeciesNodes[i - 1];
         auto e = speciesNode->node_index;
         auto ec = e * _gammaCatNumber + c;
-        REAL tp = REAL();
-        for (auto destSpeciesNode : _transferForbiddenSpeciesNodes[e]) {
-          auto d = destSpeciesNode->node_index;
-          auto dc = d * _gammaCatNumber + c;
-          tp += uq[dc];
+        temp = REAL();
+        unsigned int toTake = 0;
+        if (this->getSpeciesParent(speciesNode)) {
+          auto p = this->getSpeciesParent(speciesNode)->node_index;
+          bool takeAll = (_transferConstraint == TransferConstaint::NONE);
+          toTake = (takeAll) ? 2 : correctionStack.size() - stackRanks[p];
         }
-        tp = transferSum - tp; // sum over the candidates, but faster
-        tp /= getTransferWeightNorm(e);
-        scale(tp);
+        auto newRank = correctionStack.size() - toTake;
+        for (unsigned int j = 0; j < toTake; ++j) {
+          auto previousNode = _orderedPrunedSpeciesNodes[i - j - 2];
+          stackRanks[previousNode->node_index] = newRank;
+          temp = sumOrMax(temp, correctionStack.top());
+          if (j < toTake - 1) {
+            correctionStack.pop();
+          } else {
+            correctionStack.top() = temp;
+          }
+        }
+        stackRanks[e] = correctionStack.size();
+        correctionStack.push(uq[ec]);
+        REAL tp = sumOrMax(temp, tq[ec]);
+        if (stochastic) {
+          tp /= static_cast<double>(_tN[e]);
+          scale(tp);
+        }
         tq[ec] = tp;
-      }
-    }
-  }
-}
-
-/**
- *  Update the list of the allowed transfer-receiving species
- *  for each species branch
- */
-template <class REAL>
-void UndatedDTLMultiModel<REAL>::updateTransferCandidates() {
-  std::function<bool(unsigned int, unsigned int)> canTransfer;
-  switch (_transferConstraint) {
-  case TransferConstaint::NONE:
-    // include all the species nodes except for the self
-    canTransfer = [](unsigned int e, unsigned int d) { return d != e; };
-    break;
-  case TransferConstaint::PARENTS:
-    // include all the species nodes except for the parents
-    canTransfer = [this](unsigned int e, unsigned int d) {
-      return !this->_speciesTree.isAncestorOf(d, e);
-    };
-    break;
-  case TransferConstaint::RELDATED:
-    // include all the species nodes younger than the self's parent
-    canTransfer = [this](unsigned int e, unsigned int d) {
-      return this->_datedTree.canTransferUnderRelDated(e, d);
-    };
-    break;
-  }
-  // clear for all species nodes
-  for (unsigned int i = 0; i < this->getAllSpeciesNodeNumber(); ++i) {
-    _transferForbiddenSpeciesNodes[i].clear();
-    _transferCandidateSpeciesNodes[i].clear();
-  }
-  // fill for the current pruned species nodes
-  for (auto speciesNode : this->getPrunedSpeciesNodes()) {
-    auto e = speciesNode->node_index;
-    for (auto destSpeciesNode : this->getPrunedSpeciesNodes()) {
-      auto d = destSpeciesNode->node_index;
-      if (canTransfer(e, d)) {
-        _transferCandidateSpeciesNodes[e].push_back(destSpeciesNode);
-      } else {
-        _transferForbiddenSpeciesNodes[e].push_back(destSpeciesNode);
       }
     }
   }
@@ -371,10 +347,10 @@ void UndatedDTLMultiModel<REAL>::recomputeSpeciesProbabilities() {
       _OP[e] = 1.0 / sum;
     }
   }
-  // recompute _uE and _tE
-  updateTransferCandidates();
+  // recompute _uE, _tE and _tN
   std::fill(_uE.begin(), _uE.end(), REAL());
   std::fill(_tE.begin(), _tE.end(), REAL());
+  std::fill(_tN.begin(), _tN.end(), 0);
   // iterate several times to resolve _uE and _tE probas with
   // fixed point optimization
   unsigned int maxIt = 4;
@@ -431,19 +407,45 @@ void UndatedDTLMultiModel<REAL>::recomputeSpeciesProbabilities() {
         auto e = speciesNode->node_index;
         auto ec = e * _gammaCatNumber + c;
         REAL tproba = REAL();
-        for (auto destSpeciesNode : _transferForbiddenSpeciesNodes[e]) {
+        unsigned int tcount = this->getPrunedSpeciesNodeNumber();
+        for (auto destSpeciesNode : this->getPrunedSpeciesNodes()) {
           auto d = destSpeciesNode->node_index;
           auto dc = d * _gammaCatNumber + c;
-          tproba += _uE[dc];
+          // summing over the forbidden destinations, cause it's faster
+          if (!_datedTree.canTransfer(e, d, _transferConstraint)) {
+            tproba += _uE[dc];
+            tcount--;
+          }
         }
-        tproba = extinctionSum - tproba; // sum over the candidates, but faster
-        tproba /= getTransferWeightNorm(e);
+        tproba = extinctionSum - tproba;
+        tproba /= static_cast<double>(tcount);
         scale(tproba);
         assert(tproba < REAL(1.000001));
         _tE[ec] = tproba;
+        _tN[e] = tcount;
       }
     }
   } // end of iteration
+  // update _orderedPrunedSpeciesNodes
+  _orderedPrunedSpeciesNodes.clear();
+  auto nodes = this->_speciesTree.getPostOrderNodes();
+  if (_transferConstraint == TransferConstaint::RELDATED) {
+    nodes.clear();
+    for (auto leaf : this->_speciesTree.getLeaves()) {
+      nodes.push_back(leaf);
+    }
+    for (auto it = _datedTree.getOrderedSpeciations().rbegin();
+         it < _datedTree.getOrderedSpeciations().rend(); ++it) {
+      auto speciesNode = *it;
+      nodes.push_back(speciesNode);
+    }
+  }
+  for (auto speciesNode : nodes) {
+    if (speciesNode == this->_speciesToPrunedNode[speciesNode->node_index]) {
+      _orderedPrunedSpeciesNodes.push_back(speciesNode);
+    }
+  }
+  assert(_orderedPrunedSpeciesNodes.size() == this->getPrunedSpeciesNodeNumber());
 }
 
 /**
@@ -489,17 +491,20 @@ bool UndatedDTLMultiModel<REAL>::sampleTransferEvent(
   auto c = category;
   auto e = srcSpeciesNode->node_index;
   auto ec = e * _gammaCatNumber + c;
-  auto survivingTransferSum = _dtlclvs[cid]._tq[ec] * getTransferWeightNorm(e);
+  auto survivingTransferSum =
+      _dtlclvs[cid]._tq[ec] * static_cast<double>(_tN[e]);
   auto toSample = this->getRandom(survivingTransferSum);
   auto sumProba = REAL();
-  for (auto destSpeciesNode : _transferCandidateSpeciesNodes[e]) {
+  for (auto destSpeciesNode : this->getPrunedSpeciesNodes()) {
     auto d = destSpeciesNode->node_index;
     auto dc = d * _gammaCatNumber + c;
-    sumProba += _dtlclvs[cid]._uq[dc];
-    if (sumProba > toSample) {
-      event.destSpeciesNode = d;
-      event.pllDestSpeciesNode = destSpeciesNode;
-      return true;
+    if (_datedTree.canTransfer(e, d, _transferConstraint)) {
+      sumProba += _dtlclvs[cid]._uq[dc];
+      if (sumProba > toSample) {
+        event.destSpeciesNode = d;
+        event.pllDestSpeciesNode = destSpeciesNode;
+        return true;
+      }
     }
   }
   return false;
