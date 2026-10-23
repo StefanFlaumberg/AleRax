@@ -58,6 +58,8 @@ AleArguments::AleArguments(int iargc, char **iargv)
     } else if (arg == "--species-tree-search") {
       speciesSearchStrategy =
           ArgumentsHelper::strToSpeciesSearchStrategy(std::string(argv[++i]));
+    } else if (arg == "--species-tree-constraints") {
+      speciesConstraintFile = std::string(argv[++i]);
     } else if (arg == "--infer-speciation-order") {
       inferSpeciationOrders = true;
     } else if (arg == "-g" || arg == "--gene-tree-samples") {
@@ -321,6 +323,10 @@ void AleArguments::printSummary() const {
                  << "gene tree distributions" << std::endl;
     break;
   }
+  if (speciesConstraintFile.size()) {
+    Logger::info << "\tSpecies tree constraint file: " << speciesConstraintFile
+                 << std::endl;
+  }
   if (inferSpeciationOrders) {
     Logger::info << "\tAleRax will estimate the relative order of speciation "
                  << "events from the inferred HGTs" << std::endl;
@@ -399,6 +405,7 @@ void AleArguments::printHelp() const {
 
   Logger::info << "Search strategy options:" << std::endl;
   Logger::info << "\t--species-tree-search {HYBRID, REROOT, SKIP}" << std::endl;
+  Logger::info << "\t--species-tree-constraints <filepath>" << std::endl;
   Logger::info << "\t--infer-speciation-order" << std::endl;
 
   Logger::info << "Trimming options:" << std::endl;
@@ -457,6 +464,12 @@ void AleArguments::checkValid() const {
       Logger::info << "\nError: species tree root inference is not compatible "
                    << "with --model-parametrization <filename>" << std::endl;
     }
+  }
+  if (speciesConstraintFile.size() &&
+      speciesTreeAlgorithm != SpeciesTreeAlgorithm::User) {
+    ok = false;
+    Logger::info << "\nError: constrained species tree search requires "
+                 << "a user-provided starting species tree" << std::endl;
   }
   // recmodel block
   if (reconciliationModelStr != "UndatedDTL") {

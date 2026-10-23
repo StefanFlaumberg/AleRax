@@ -72,6 +72,7 @@ public:
   // search
   SpeciesTreeAlgorithm speciesTreeAlgorithm;
   SpeciesSearchStrategy speciesSearchStrategy;
+  std::string speciesConstraintFile;
   bool inferSpeciationOrders;
   ModelParametrization modelParametrization;
   std::string optimizationClassFile;

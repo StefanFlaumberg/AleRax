@@ -16,6 +16,7 @@
 #include <util/Scenario.hpp>
 
 AleOptimizer::AleOptimizer(const std::string &speciesTreeFile,
+                           const std::string &speciesConstraintFile,
                            const Families &families, const RecModelInfo &info,
                            const ModelParametrization &modelParametrization,
                            const std::string &optimizationClassFile,
@@ -28,6 +29,7 @@ AleOptimizer::AleOptimizer(const std::string &speciesTreeFile,
   // init the current state (from checkpoint or de novo)
   _state.speciesTree = std::make_unique<SpeciesTree>(
       speciesTreeFile, true, getRecModelInfo().isDated());
+  getSpeciesTree().initFixedClades(speciesConstraintFile);
   if (checkpointExists()) {
     Logger::info << "Loading checkpoint information..." << std::endl;
     for (unsigned int i = 0; i < getLocalFamilyNumber(); ++i) {

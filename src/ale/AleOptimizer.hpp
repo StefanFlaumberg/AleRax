@@ -18,8 +18,9 @@ public:
   /**
    *  Constructor
    */
-  AleOptimizer(const std::string &speciesTreeFile, const Families &families,
-               const RecModelInfo &info,
+  AleOptimizer(const std::string &speciesTreeFile,
+               const std::string &speciesConstraintFile,
+               const Families &families, const RecModelInfo &info,
                const ModelParametrization &modelParametrization,
                const std::string &optimizationClassFile,
                const Parameters &startingRates, bool optimizeRates,

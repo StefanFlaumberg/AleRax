@@ -533,10 +533,15 @@ void run(AleArguments &args) {
   // initializing the optimizer
   auto info = buildRecModelInfo(args);
   auto startingRates = buildStartingRates(args, info);
+  if (args.optimizationClassFile.empty() && !args.randomSpeciesRoot &&
+      args.speciesSearchStrategy == SpeciesSearchStrategy::SKIP) {
+    // keep user-provided labels if the tree topology is fixed
+    args.optimizationClassFile = "__allfixed__";
+  }
   AleOptimizer speciesTreeOptimizer(
-      args.speciesTree, families, info, args.modelParametrization,
-      args.optimizationClassFile, startingRates, !args.fixRates,
-      args.optVerbose, args.output);
+      args.speciesTree, args.speciesConstraintFile, families, info,
+      args.modelParametrization, args.optimizationClassFile, startingRates,
+      !args.fixRates, args.optVerbose, args.output);
   if (!checkpointDetected) {
     initCheckpoint(args, families, ckpDir);
     speciesTreeOptimizer.setCurrentStep(AleStep::SpeciesTreeOpt);
